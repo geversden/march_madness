@@ -354,7 +354,7 @@ LOG_SCALE <- 0.0917
 
 sim_file <- file.path(script_dir, sprintf("sim_results_%d.rds", target_year))
 if (file.exists(sim_file)) {
-  # Priority 1: Simulation results (all rounds)
+  # Simulation results for R2+ round advancement probabilities
   cat(sprintf("Loading sim results: %s\n", basename(sim_file)))
   sim <- readRDS(sim_file)
   ri <- sim$round_info
@@ -372,38 +372,42 @@ if (file.exists(sim_file)) {
   has_sim <- TRUE
 } else {
   has_sim <- FALSE
+  # Initialize wp columns
+  for (rd in 1:6) teams[, paste0("wp_R", rd) := 0]
+}
 
-  # Priority 2: Closing lines for R1
-  cl_wp <- load_closing_lines(target_year, teams$name)
+# Closing lines ALWAYS override R1 when available (more accurate than sim/KenPom)
+cl_wp <- load_closing_lines(target_year, teams$name)
 
-  if (!is.null(cl_wp) && length(cl_wp) >= 60) {
-    n_matched <- 0
-    for (i in seq_len(nrow(teams))) {
-      wp <- cl_wp[[teams$name[i]]]
-      if (!is.null(wp)) {
-        teams[i, wp_R1 := wp]
-        n_matched <- n_matched + 1
-      } else {
-        # Fallback for unmatched: use KenPom logistic
-        j <- if (i %% 2 == 1) i + 1 else i - 1
-        teams[i, wp_R1 := 1 / (1 + exp(-LOG_SCALE * (teams$AdjEM[i] - teams$AdjEM[j])))]
-        cat(sprintf("  WARNING: No closing line for %s, using KenPom fallback\n",
-                    teams$name[i]))
-      }
-    }
-    cat(sprintf("Using closing lines for R1 win probabilities (%d/%d teams matched)\n",
-                n_matched, nrow(teams)))
-  } else {
-    # Priority 3: KenPom logistic approximation
-    cat("No closing lines found. Approximating win probs from KenPom.\n")
-    for (g in 1:32) {
-      i <- 2*g - 1; j <- 2*g
-      p <- 1 / (1 + exp(-LOG_SCALE * (teams$AdjEM[i] - teams$AdjEM[j])))
-      teams[i, wp_R1 := p]
-      teams[j, wp_R1 := 1 - p]
+if (!is.null(cl_wp) && length(cl_wp) >= 60) {
+  n_matched <- 0
+  for (i in seq_len(nrow(teams))) {
+    wp <- cl_wp[[teams$name[i]]]
+    if (!is.null(wp)) {
+      teams[i, wp_R1 := wp]
+      n_matched <- n_matched + 1
+    } else {
+      # Fallback for unmatched: use KenPom logistic
+      j <- if (i %% 2 == 1) i + 1 else i - 1
+      teams[i, wp_R1 := 1 / (1 + exp(-LOG_SCALE * (teams$AdjEM[i] - teams$AdjEM[j])))]
+      cat(sprintf("  WARNING: No closing line for %s, using KenPom fallback\n",
+                  teams$name[i]))
     }
   }
+  cat(sprintf("Using closing lines for R1 win probabilities (%d/%d teams matched)\n",
+              n_matched, nrow(teams)))
+} else if (!has_sim) {
+  # No closing lines and no sim: KenPom logistic approximation
+  cat("No closing lines found. Approximating win probs from KenPom.\n")
+  for (g in 1:32) {
+    i <- 2*g - 1; j <- 2*g
+    p <- 1 / (1 + exp(-LOG_SCALE * (teams$AdjEM[i] - teams$AdjEM[j])))
+    teams[i, wp_R1 := p]
+    teams[j, wp_R1 := 1 - p]
+  }
+}
 
+if (!has_sim) {
   # R2+: rough approximation (compound probabilities)
   for (rd in 2:6) {
     prev <- paste0("wp_R", rd - 1)
@@ -506,8 +510,6 @@ SEED_TB_COEFF <- 1.2  # strength of seed tiebreaker preference
 # This naturally produces the right concentration: softmax creates exponential
 # peaks for teams with the best feature combinations.
 
-cat("Calibrating M3 (log-linear softmax) on historical R1 data...\n")
-
 bracket_dir <- file.path(script_dir, "brackets")
 
 # Build historical R1 feature matrix for fitting
@@ -609,81 +611,105 @@ for (i in which(is.na(hist_features$pick_perc))) {
 }
 hist_features[is.na(pick_perc), pick_perc := 0]
 
-# Fit log-linear model:
-#   log(pick_share) ~ β_wp*wp + β_seed*seed + β_save*fv + β_wxs*wp*seed
-#                    + β_seed²*seed² + β_drop*wp_drop
-#
-# The wp_drop feature captures "use it or lose it" behavior:
-#   wp_drop = wp_R1 - wp_R2 (compound). High drop means the team is strong
-#   NOW but faces a brutal R2 matchup (e.g. 8-seed vs 1-seed).
-#   This is why Gonzaga 8-seed gets 26.5% despite only 70% R1 WP —
-#   people know they won't be usable in R2.
-#
-# Objective: for each year, softmax predictions match actual ownership
-m3_loglinear_loss <- function(par) {
-  b_wp <- par[1]; b_seed <- par[2]; b_save <- par[3]
-  b_wxs <- par[4]; b_seed2 <- par[5]; b_drop <- par[6]; b_drop2 <- par[7]
+# --- M3 Calibration with caching ---
+# Hash the training data to detect when re-calibration is needed
+m3_cache_file <- file.path(script_dir, "m3_calibration_cache.rds")
+m3_hash_data <- hist_features[, .(name, seed, wp, wp_drop, fv, pick_perc, year)]
+m3_data_hash <- paste0(nrow(m3_hash_data), "_", ncol(m3_hash_data), "_",
+                       sum(m3_hash_data$wp, na.rm = TRUE), "_",
+                       sum(m3_hash_data$wp_drop, na.rm = TRUE), "_",
+                       sum(m3_hash_data$pick_perc, na.rm = TRUE), "_",
+                       paste(sort(unique(m3_hash_data$year)), collapse = ","))
 
-  total_err <- 0
-  n_years <- 0
-
-  for (yr in HISTORICAL_YEARS) {
-    yd <- hist_features[year == yr]
-    if (nrow(yd) < 30) next
-
-    cs <- pmin(yd$seed, 12)
-    log_attract <- b_wp * yd$wp + b_seed * cs + b_save * yd$fv +
-                   b_wxs * yd$wp * cs + b_seed2 * cs^2 +
-                   b_drop * yd$wp_drop + b_drop2 * yd$wp_drop^2
-    # Softmax
-    log_attract <- log_attract - max(log_attract)  # numerical stability
-    pred <- exp(log_attract) / sum(exp(log_attract))
-
-    actual_norm <- yd$pick_perc / sum(yd$pick_perc)
-
-    # Loss: weighted MSE with extra weight on top teams + peak matching
-    wt <- actual_norm + 0.001  # linear weight by actual (heavy emphasis on top teams)
-    err <- sum(wt * (pred - actual_norm)^2)
-    # Peak penalty: match the max ownership level
-    peak_err <- (max(pred) - max(actual_norm))^2 * 5.0
-    total_err <- total_err + err + peak_err
-    n_years <- n_years + 1
-  }
-
-  if (n_years == 0) return(1e6)
-  total_err / n_years
-}
-
-# Optimize with multiple starting points (7 params now)
-best_val <- Inf
-best_par <- c(1.0, 0.2, -2.0, 0.1, 0.0, 2.0, 1.0)
-
-starts <- list(
-  c(1.0, 0.2, -2.0, 0.1, 0.0, 2.0, 1.0),
-  c(2.0, 0.3, -3.0, 0.0, 0.01, 3.0, 2.0),
-  c(0.5, 0.1, -1.0, 0.2, -0.01, 1.5, 0.5),
-  c(3.0, 0.4, -4.0, -0.1, 0.02, 4.0, 3.0),
-  c(-4.4, -0.94, 1.28, 1.30, 0.021, 1.6, 2.0),  # near previous best
-  c(-4.4, -0.94, 1.28, 1.30, 0.021, 3.0, 5.0),  # previous best + large drop terms
-  c(-8.0, -1.5, 2.0, 2.5, 0.04, 5.0, 8.0),  # scaled-up version
-  c(-6.0, -1.2, 1.5, 2.0, 0.03, 4.0, 4.0)
-)
-
-for (s in starts) {
-  opt_try <- tryCatch(
-    optim(s, m3_loglinear_loss, method = "Nelder-Mead",
-          control = list(maxit = 10000)),
-    error = function(e) list(value = Inf, par = s))
-  if (opt_try$value < best_val) {
-    best_val <- opt_try$value
-    best_par <- opt_try$par
+m3_cache_valid <- FALSE
+if (file.exists(m3_cache_file)) {
+  m3_cache <- readRDS(m3_cache_file)
+  if (identical(m3_cache$data_hash, m3_data_hash)) {
+    M3_BETA <- m3_cache$beta
+    best_val <- m3_cache$loss
+    m3_cache_valid <- TRUE
+    cat(sprintf("Loaded cached M3 calibration (hash match)\n"))
+    cat(sprintf("  M3 (log-linear): β_wp=%.3f, β_seed=%.3f, β_save=%.3f, β_wp×seed=%.3f, β_seed²=%.4f, β_drop=%.3f, β_drop²=%.3f\n",
+                M3_BETA[1], M3_BETA[2], M3_BETA[3], M3_BETA[4], M3_BETA[5], M3_BETA[6], M3_BETA[7]))
+    cat(sprintf("  Loss: %.6f\n\n", best_val))
   }
 }
 
-M3_BETA <- best_par
-cat(sprintf("  Fitted M3 (log-linear): β_wp=%.3f, β_seed=%.3f, β_save=%.3f, β_wp×seed=%.3f, β_seed²=%.4f, β_drop=%.3f, β_drop²=%.3f\n",
-            M3_BETA[1], M3_BETA[2], M3_BETA[3], M3_BETA[4], M3_BETA[5], M3_BETA[6], M3_BETA[7]))
-cat(sprintf("  Loss: %.6f\n\n", best_val))
+if (!m3_cache_valid) {
+  cat("Calibrating M3 (log-linear softmax) on historical R1 data...\n")
+
+  # Fit log-linear model:
+  #   log(pick_share) ~ β_wp*wp + β_seed*seed + β_save*fv + β_wxs*wp*seed
+  #                    + β_seed²*seed² + β_drop*wp_drop
+  #
+  # wp_drop = wp_R1 - wp_R2: "use it or lose it" signal
+  m3_loglinear_loss <- function(par) {
+    b_wp <- par[1]; b_seed <- par[2]; b_save <- par[3]
+    b_wxs <- par[4]; b_seed2 <- par[5]; b_drop <- par[6]; b_drop2 <- par[7]
+
+    total_err <- 0
+    n_years <- 0
+
+    for (yr in HISTORICAL_YEARS) {
+      yd <- hist_features[year == yr]
+      if (nrow(yd) < 30) next
+
+      cs <- pmin(yd$seed, 12)
+      log_attract <- b_wp * yd$wp + b_seed * cs + b_save * yd$fv +
+                     b_wxs * yd$wp * cs + b_seed2 * cs^2 +
+                     b_drop * yd$wp_drop + b_drop2 * yd$wp_drop^2
+      log_attract <- log_attract - max(log_attract)
+      pred <- exp(log_attract) / sum(exp(log_attract))
+
+      actual_norm <- yd$pick_perc / sum(yd$pick_perc)
+
+      wt <- actual_norm + 0.001
+      err <- sum(wt * (pred - actual_norm)^2)
+      peak_err <- (max(pred) - max(actual_norm))^2 * 5.0
+      total_err <- total_err + err + peak_err
+      n_years <- n_years + 1
+    }
+
+    if (n_years == 0) return(1e6)
+    total_err / n_years
+  }
+
+  # Optimize with multiple starting points (7 params)
+  best_val <- Inf
+  best_par <- c(1.0, 0.2, -2.0, 0.1, 0.0, 2.0, 1.0)
+
+  starts <- list(
+    c(1.0, 0.2, -2.0, 0.1, 0.0, 2.0, 1.0),
+    c(2.0, 0.3, -3.0, 0.0, 0.01, 3.0, 2.0),
+    c(0.5, 0.1, -1.0, 0.2, -0.01, 1.5, 0.5),
+    c(3.0, 0.4, -4.0, -0.1, 0.02, 4.0, 3.0),
+    c(-4.4, -0.94, 1.28, 1.30, 0.021, 1.6, 2.0),
+    c(-4.4, -0.94, 1.28, 1.30, 0.021, 3.0, 5.0),
+    c(-8.0, -1.5, 2.0, 2.5, 0.04, 5.0, 8.0),
+    c(-6.0, -1.2, 1.5, 2.0, 0.03, 4.0, 4.0)
+  )
+
+  for (s in starts) {
+    opt_try <- tryCatch(
+      optim(s, m3_loglinear_loss, method = "Nelder-Mead",
+            control = list(maxit = 10000)),
+      error = function(e) list(value = Inf, par = s))
+    if (opt_try$value < best_val) {
+      best_val <- opt_try$value
+      best_par <- opt_try$par
+    }
+  }
+
+  M3_BETA <- best_par
+  cat(sprintf("  Fitted M3 (log-linear): β_wp=%.3f, β_seed=%.3f, β_save=%.3f, β_wp×seed=%.3f, β_seed²=%.4f, β_drop=%.3f, β_drop²=%.3f\n",
+              M3_BETA[1], M3_BETA[2], M3_BETA[3], M3_BETA[4], M3_BETA[5], M3_BETA[6], M3_BETA[7]))
+  cat(sprintf("  Loss: %.6f\n\n", best_val))
+
+  # Save cache
+  saveRDS(list(beta = M3_BETA, loss = best_val, data_hash = m3_data_hash),
+          m3_cache_file)
+  cat(sprintf("  Saved M3 calibration cache to %s\n", basename(m3_cache_file)))
+}
 
 # Function to predict R1 ownership using fitted log-linear model
 m3_predict_r1 <- function(wp, seed, fv, wp_drop) {
