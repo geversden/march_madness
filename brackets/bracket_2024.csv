@@ -1,0 +1,65 @@
+region,seed,team
+East,1,UConn
+East,16,Stetson
+East,8,Florida Atlantic
+East,9,Northwestern
+East,5,San Diego State
+East,12,UAB
+East,4,Auburn
+East,13,Yale
+East,6,BYU
+East,11,Duquesne
+East,3,Illinois
+East,14,Morehead State
+East,7,Washington State
+East,10,Drake
+East,2,Iowa State
+East,15,South Dakota State
+West,1,North Carolina
+West,16,Wagner
+West,8,Mississippi State
+West,9,Michigan State
+West,5,Saint Mary's
+West,12,Grand Canyon
+West,4,Alabama
+West,13,Charleston
+West,6,Clemson
+West,11,New Mexico
+West,3,Baylor
+West,14,Colgate
+West,7,Dayton
+West,10,Nevada
+West,2,Arizona
+West,15,Long Beach State
+Midwest,1,Purdue
+Midwest,16,Grambling State
+Midwest,8,Utah State
+Midwest,9,TCU
+Midwest,5,Gonzaga
+Midwest,12,McNeese State
+Midwest,4,Kansas
+Midwest,13,Samford
+Midwest,6,South Carolina
+Midwest,11,Oregon
+Midwest,3,Creighton
+Midwest,14,Akron
+Midwest,7,Texas
+Midwest,10,Colorado State
+Midwest,2,Tennessee
+Midwest,15,Saint Peter's
+South,1,Houston
+South,16,Longwood
+South,8,Nebraska
+South,9,Texas A&M
+South,5,Wisconsin
+South,12,James Madison
+South,4,Duke
+South,13,Vermont
+South,6,Texas Tech
+South,11,NC State
+South,3,Kentucky
+South,14,Oakland
+South,7,Florida
+South,10,Colorado
+South,2,Marquette
+South,15,Western Kentucky

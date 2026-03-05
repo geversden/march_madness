@@ -1,0 +1,111 @@
+"
+Seed",Team,previous_usage_raw,previous_usage_perc,raw_picks,pick_perc,Round
+3,Kansas St,,,107,16.1%,1
+4,Tennessee,,,104,15.7%,1
+6,TCU,,,96,14.5%,1
+10,Utah St,,,94,14.2%,1
+3,Baylor,,,93,14.0%,1
+3,Xavier,,,86,13.0%,1
+6,Creighton,,,86,13.0%,1
+9,West Virginia,,,68,10.3%,1
+5,Duke,,,67,10.1%,1
+8,Memphis,,,58,8.7%,1
+10,Boise St,,,56,8.4%,1
+12,Drake,,,55,8.3%,1
+8,Arkansas,,,53,8.0%,1
+4,UConn,,,53,8.0%,1
+9,Auburn,,,52,7.8%,1
+1,Purdue,,,50,7.5%,1
+6,Kentucky,,,48,7.2%,1
+3,Gonzaga,,,48,7.2%,1
+7,Texas A&M,,,46,6.9%,1
+6,Iowa St,,,45,6.8%,1
+4,Virginia,,,44,6.6%,1
+5,San Diego St,,,41,6.2%,1
+7,Michigan St,,,39,5.9%,1
+2,Marquette,,,36,5.4%,1
+7,Missouri,,,35,5.3%,1
+4,Indiana,,,33,5.0%,1
+10,Penn St,,,31,4.7%,1
+7,Northwestern,,,30,4.5%,1
+5,St. Marys,,,28,4.2%,1
+1,Kansas,,,27,4.1%,1
+2,UCLA,,,26,3.9%,1
+12,VCU,,,25,3.8%,1
+2,Texas,,,23,3.5%,1
+13,Kent St,,,22,3.3%,1
+5,Miami FL,,,22,3.3%,1
+12,Charleston,,,22,3.3%,1
+13,Furman,,,14,2.1%,1
+10,USC,,,14,2.1%,1
+9,Illinois,,,13,2.0%,1
+2,Arizona,,,12,1.8%,1
+11,Pittsburgh,,,12,1.8%,1
+9,Fla Atlantic,,,10,1.5%,1
+8,Maryland,,,9,1.4%,1
+8,Iowa,,,9,1.4%,1
+11,NC State,,,9,1.4%,1
+1,Houston,,,8,1.2%,1
+12,Oral Roberts,,,5,0.8%,1
+11,Arizona St,,,5,0.8%,1
+13,Iona,,,4,0.6%,1
+1,Alabama,,,4,0.6%,1
+11,Providence,,,3,0.5%,1
+13,Louisiana,,,3,0.5%,1
+14,UCSB,,,2,0.3%,1
+15,Colgate,,,1,0.2%,1
+15,Princeton,,,1,0.2%,1
+14,Montana St,,,1,0.2%,1
+14,Kennesaw St,,,1,0.2%,1
+9,Fla Atlantic,1,0.4%,148,63.0%,2
+7,Missouri,16,6.8%,116,49.4%,2
+5,San Diego St,19,8.1%,86,36.6%,2
+3,Xavier,56,23.8%,47,20.0%,2
+2,UCLA,12,5.1%,45,19.1%,2
+3,Gonzaga,29,12.3%,32,13.6%,2
+4,UConn,40,17.0%,30,12.8%,2
+,No Pick,0,0.0%,21,8.9%,2
+2,Texas,13,5.5%,18,7.7%,2
+5,Duke,38,16.2%,15,6.4%,2
+1,Alabama,3,1.3%,15,6.4%,2
+6,Kentucky,24,10.2%,14,6.0%,2
+11,Pittsburgh,1,0.4%,13,5.5%,2
+1,Kansas,22,9.4%,12,5.1%,2
+13,Furman,3,1.3%,11,4.7%,2
+2,Marquette,22,9.4%,10,4.3%,2
+4,Indiana,18,7.7%,10,4.3%,2
+9,Auburn,15,6.4%,8,3.4%,2
+15,Princeton,1,0.4%,8,3.4%,2
+1,Houston,3,1.3%,7,3.0%,2
+8,Arkansas,19,8.1%,5,2.1%,2
+5,Miami FL,13,5.5%,5,2.1%,2
+10,Penn St,11,4.7%,5,2.1%,2
+16,Fairleigh Dickinson,0,0.0%,5,2.1%,2
+3,Kansas St,70,29.8%,4,1.7%,2
+3,Baylor,64,27.2%,4,1.7%,2
+6,Creighton,39,16.6%,4,1.7%,2
+7,Michigan St,18,7.7%,3,1.3%,2
+4,Tennessee,58,24.7%,2,0.9%,2
+6,TCU,46,19.6%,1,0.4%,2
+5,St. Marys,15,6.4%,1,0.4%,2
+6,Creighton,10,24.4%,20,48.8%,3
+4,Tennessee,9,22.0%,13,31.7%,3
+2,Texas,13,31.7%,10,24.4%,3
+7,Michigan St,4,9.8%,8,19.5%,3
+4,UConn,19,46.3%,5,12.2%,3
+2,UCLA,16,39.0%,3,7.3%,3
+1,Houston,2,4.9%,2,4.9%,3
+3,Kansas St,13,31.7%,1,2.4%,3
+8,Arkansas,3,7.3%,1,2.4%,3
+15,Princeton,1,2.4%,1,2.4%,3
+3,Kansas St,6,40.0%,6,40.0%,4
+6,Creighton,11,73.3%,2,13.3%,4
+2,Texas,8,53.3%,2,13.3%,4
+5,Miami FL,2,13.3%,2,13.3%,4
+5,San Diego St,10,66.7%,1,6.7%,4
+4,UConn,9,60.0%,1,6.7%,4
+3,Gonzaga,4,26.7%,1,6.7%,4
+4,UConn,2,50.0%,2,50.0%,5
+5,Miami FL,3,75.0%,1,25.0%,5
+,No Pick,0,0.0%,1,25.0%,5
+,No Pick,0,0.0%,2,100%,6

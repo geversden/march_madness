@@ -1,0 +1,65 @@
+region,seed,team
+South,1,Alabama
+South,16,Texas A&M-Corpus Christi
+South,8,Maryland
+South,9,West Virginia
+South,5,San Diego State
+South,12,College of Charleston
+South,4,Virginia
+South,13,Furman
+South,6,Creighton
+South,11,NC State
+South,3,Baylor
+South,14,UC Santa Barbara
+South,7,Missouri
+South,10,Utah State
+South,2,Arizona
+South,15,Princeton
+East,1,Purdue
+East,16,Fairleigh Dickinson
+East,8,Memphis
+East,9,Florida Atlantic
+East,5,Duke
+East,12,Oral Roberts
+East,4,Tennessee
+East,13,Louisiana
+East,6,Kentucky
+East,11,Providence
+East,3,Kansas State
+East,14,Montana State
+East,7,Michigan State
+East,10,USC
+East,2,Marquette
+East,15,Vermont
+West,1,Kansas
+West,16,Howard
+West,8,Arkansas
+West,9,Illinois
+West,5,Saint Mary's
+West,12,VCU
+West,4,UConn
+West,13,Iona
+West,6,TCU
+West,11,Arizona State
+West,3,Gonzaga
+West,14,Grand Canyon
+West,7,Northwestern
+West,10,Boise State
+West,2,UCLA
+West,15,UNC Asheville
+Midwest,1,Houston
+Midwest,16,Northern Kentucky
+Midwest,8,Iowa
+Midwest,9,Auburn
+Midwest,5,Miami
+Midwest,12,Drake
+Midwest,4,Indiana
+Midwest,13,Kent State
+Midwest,6,Iowa State
+Midwest,11,Pittsburgh
+Midwest,3,Xavier
+Midwest,14,Kennesaw State
+Midwest,7,Texas A&M
+Midwest,10,Penn State
+Midwest,2,Texas
+Midwest,15,Colgate

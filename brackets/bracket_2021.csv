@@ -1,0 +1,65 @@
+region,seed,team
+South,1,Baylor
+South,16,Hartford
+South,8,North Carolina
+South,9,Wisconsin
+South,5,Villanova
+South,12,Winthrop
+South,4,Purdue
+South,13,North Texas
+South,6,Texas Tech
+South,11,Utah State
+South,3,Arkansas
+South,14,Colgate
+South,7,Florida
+South,10,Virginia Tech
+South,2,Ohio State
+South,15,Oral Roberts
+Midwest,1,Illinois
+Midwest,16,Drexel
+Midwest,8,Loyola Chicago
+Midwest,9,Georgia Tech
+Midwest,5,Tennessee
+Midwest,12,Oregon State
+Midwest,4,Oklahoma State
+Midwest,13,Liberty
+Midwest,6,San Diego State
+Midwest,11,Syracuse
+Midwest,3,West Virginia
+Midwest,14,Morehead State
+Midwest,7,Clemson
+Midwest,10,Rutgers
+Midwest,2,Houston
+Midwest,15,Cleveland State
+West,1,Gonzaga
+West,16,Norfolk State
+West,8,Oklahoma
+West,9,Missouri
+West,5,Creighton
+West,12,UC Santa Barbara
+West,4,Virginia
+West,13,Ohio
+West,6,USC
+West,11,Drake
+West,3,Kansas
+West,14,Eastern Washington
+West,7,Oregon
+West,10,VCU
+West,2,Iowa
+West,15,Grand Canyon
+East,1,Michigan
+East,16,Texas Southern
+East,8,LSU
+East,9,St. Bonaventure
+East,5,Colorado
+East,12,Georgetown
+East,4,Florida State
+East,13,UNC Greensboro
+East,6,BYU
+East,11,UCLA
+East,3,Texas
+East,14,Abilene Christian
+East,7,UConn
+East,10,Maryland
+East,2,Alabama
+East,15,Iona
