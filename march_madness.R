@@ -400,15 +400,6 @@ for (reg in region_names) {
 # SURVIVOR POOL HELPER
 # ==============================================================================
 
-round_cols <- list(
-  R64  = which(round_info$round_num == 1),
-  R32  = which(round_info$round_num == 2),
-  S16  = which(round_info$round_num == 3),
-  E8   = which(round_info$round_num == 4),
-  FF   = which(round_info$round_num == 5),
-  Champ = which(round_info$round_num == 6)
-)
-
 evaluate_survivor <- function(sim, r1, r2, s16, e8, ff, champ) {
   tm   <- sim$teams
   ar   <- sim$all_results

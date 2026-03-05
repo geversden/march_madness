@@ -17,11 +17,6 @@ double win_prob(double rating_a, double rating_b) {
   return 1.0 / (1.0 + std::exp(-LOG_SCALE * diff));
 }
 
-// [[Rcpp::export]]
-double get_win_prob(double rating_a, double rating_b) {
-  return win_prob(rating_a, rating_b);
-}
-
 // Simulate a full 64-team bracket
 // ratings:       length-64 vector of power ratings (0-indexed internally)
 // bracket_order: length-64 vector of 1-indexed team IDs in bracket position order
