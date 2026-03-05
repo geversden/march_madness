@@ -81,41 +81,72 @@ cat(sprintf("  %d observations, %d-%d, avg %.0f entries/year\n\n",
 # NAME RESOLUTION
 # ==============================================================================
 
-kp_alias <- c(
-  "Michigan State"="Michigan St.", "Iowa State"="Iowa St.",
-  "Mississippi State"="Mississippi St.", "Utah State"="Utah St.",
-  "Colorado State"="Colorado St.", "Oklahoma State"="Oklahoma St.",
-  "Ohio State"="Ohio St.", "Florida State"="Florida St.",
-  "Murray State"="Murray St.", "McNeese State"="McNeese St.",
-  "Morehead State"="Morehead St.", "Kansas State"="Kansas St.",
-  "Boise State"="Boise St.", "Kent State"="Kent St.",
-  "Oregon State"="Oregon St.", "San Diego State"="San Diego St.",
-  "Arizona State"="Arizona St.", "Penn State"="Penn St.",
-  "South Dakota State"="South Dakota St.", "Montana State"="Montana St.",
-  "Jacksonville State"="Jacksonville St.", "Washington State"="Washington St.",
-  "Long Beach State"="Long Beach St.", "Wright State"="Wright St.",
-  "Ole Miss"="Mississippi", "UConn"="Connecticut",
-  "NC State"="N.C. State", "McNeese"="McNeese St.",
-  "Saint Mary's"="Saint Mary's", "St. John's"="St. John's",
-  "St. Bonaventure"="St. Bonaventure", "St. Peter's"="Saint Peter's",
-  "Saint Peter's"="Saint Peter's", "Loyola Chicago"="Loyola Chicago",
-  "Colorado St"="Colorado St.", "Miami FL"="Miami FL", "Miami"="Miami FL",
-  "Fla Atlantic"="Florida Atlantic", "St. Marys"="Saint Mary's",
-  "NM State"="New Mexico St.", "Va Tech"="Virginia Tech",
-  "North Carolina St."="N.C. State", "San Diego St."="San Diego St.",
-  "Michigan St"="Michigan St.", "Michigan St."="Michigan St.",
-  "Iowa St."="Iowa St.", "Colorado St."="Colorado St.",
-  "McNeese St."="McNeese St.", "Omaha"="Nebraska Omaha",
-  "SIU Edwardsville"="SIUE", "UCF"="Central Florida",
-  "UC San Diego"="UC San Diego", "Mount St. Mary's"="Mount St. Mary's",
-  "College of Charleston"="Charleston", "Grambling"="Grambling St.",
-  "Norfolk State"="Norfolk St.", "Alabama State"="Alabama St.",
-  "Kennesaw State"="Kennesaw St.", "Georgia State"="Georgia St."
-)
+# Load team name dictionary (single source of truth for name mappings)
+team_dict_file <- file.path(script_dir, "team_names.csv")
+if (file.exists(team_dict_file)) {
+  team_dict <- fread(team_dict_file)
+  # bracket_name -> kenpom_name
+  kp_alias <- setNames(team_dict$kenpom_name, team_dict$bracket_name)
+  # closing_lines_name -> bracket_name (for loading closing lines)
+  cl_to_bracket <- setNames(team_dict$bracket_name, team_dict$closing_lines_name)
+  cat(sprintf("Loaded team name dictionary: %d entries\n", nrow(team_dict)))
+} else {
+  cat("WARNING: team_names.csv not found, using hardcoded aliases\n")
+  kp_alias <- c(
+    "Michigan State"="Michigan St.", "Iowa State"="Iowa St.",
+    "Mississippi State"="Mississippi St.", "Utah State"="Utah St.",
+    "Colorado State"="Colorado St.", "Oklahoma State"="Oklahoma St.",
+    "Ohio State"="Ohio St.", "Florida State"="Florida St.",
+    "Murray State"="Murray St.", "McNeese State"="McNeese",
+    "Morehead State"="Morehead St.", "Kansas State"="Kansas St.",
+    "Boise State"="Boise St.", "Kent State"="Kent St.",
+    "Oregon State"="Oregon St.", "San Diego State"="San Diego St.",
+    "Arizona State"="Arizona St.", "Penn State"="Penn St.",
+    "South Dakota State"="South Dakota St.", "Montana State"="Montana St.",
+    "Jacksonville State"="Jacksonville St.", "Washington State"="Washington St.",
+    "Long Beach State"="Long Beach St.", "Wright State"="Wright St.",
+    "Ole Miss"="Mississippi", "UConn"="Connecticut",
+    "NC State"="N.C. State", "McNeese"="McNeese",
+    "Saint Mary's"="Saint Mary's", "St. John's"="St. John's",
+    "St. Bonaventure"="St. Bonaventure", "St. Peter's"="Saint Peter's",
+    "Saint Peter's"="Saint Peter's", "Loyola Chicago"="Loyola Chicago",
+    "Colorado St"="Colorado St.", "Miami FL"="Miami FL", "Miami"="Miami FL",
+    "Fla Atlantic"="Florida Atlantic", "St. Marys"="Saint Mary's",
+    "NM State"="New Mexico St.", "Va Tech"="Virginia Tech",
+    "North Carolina St."="N.C. State", "San Diego St."="San Diego St.",
+    "Michigan St"="Michigan St.", "Michigan St."="Michigan St.",
+    "Iowa St."="Iowa St.", "Colorado St."="Colorado St.",
+    "McNeese St."="McNeese", "Omaha"="Nebraska Omaha",
+    "SIU Edwardsville"="SIUE", "UCF"="Central Florida",
+    "UC San Diego"="UC San Diego", "Mount St. Mary's"="Mount St. Mary's",
+    "College of Charleston"="Charleston", "Grambling"="Grambling St.",
+    "Norfolk State"="Norfolk St.", "Alabama State"="Alabama St.",
+    "Kennesaw State"="Kennesaw St.", "Georgia State"="Georgia St."
+  )
+  cl_to_bracket <- NULL
+}
 
 resolve_name <- function(name) {
   name <- trimws(name)
   if (name %in% names(kp_alias)) kp_alias[[name]] else name
+}
+
+# Resolve closing-lines team name (with mascot) to bracket name
+resolve_cl_to_bracket <- function(cl_name, bracket_teams) {
+  # 1. Dictionary lookup (priority — handles "St" vs "State" ambiguity)
+  if (!is.null(cl_to_bracket) && cl_name %in% names(cl_to_bracket)) {
+    return(cl_to_bracket[[cl_name]])
+  }
+  # 2. Prefix match: bracket name is a prefix of closing-lines name
+  sorted_bt <- bracket_teams[order(-nchar(bracket_teams))]
+  for (bt in sorted_bt) {
+    if (startsWith(cl_name, bt) &&
+        (nchar(cl_name) == nchar(bt) ||
+         substr(cl_name, nchar(bt) + 1, nchar(bt) + 1) == " ")) {
+      return(bt)
+    }
+  }
+  return(NA_character_)
 }
 
 # ==============================================================================
@@ -301,11 +332,60 @@ setorder(teams, team_id)
 cat(sprintf("Loaded %d teams, KenPom from %s\n", nrow(teams), basename(kp_file)))
 
 # ==============================================================================
-# WIN PROBABILITIES (from sim or approximation)
+# WIN PROBABILITIES (from sim, closing lines, or KenPom approximation)
 # ==============================================================================
+
+# Load closing lines for a given year and return R1 win probabilities
+# Returns a named list: bracket_name -> R1 win probability, or NULL
+load_closing_lines <- function(year, bracket_teams) {
+  f <- file.path(script_dir, "closing_lines",
+                 sprintf("ncaat_%d_closing_lines.csv", year))
+  if (!file.exists(f)) return(NULL)
+
+  cl <- fread(f)
+
+  # Resolve team names to bracket names
+  cl[, home_bracket := sapply(home_team, resolve_cl_to_bracket,
+                              bracket_teams = bracket_teams)]
+  cl[, away_bracket := sapply(away_team, resolve_cl_to_bracket,
+                              bracket_teams = bracket_teams)]
+
+  # Keep only games where both teams resolved
+  cl <- cl[!is.na(home_bracket) & !is.na(away_bracket)]
+  if (nrow(cl) == 0) return(NULL)
+
+  # Identify R1 games: first 32 games (by date) where each team appears once
+  cl[, game_date := as.Date(date)]
+  setorder(cl, game_date)
+
+  r1_teams_seen <- character(0)
+  r1_rows <- integer(0)
+  for (i in seq_len(nrow(cl))) {
+    h <- cl$home_bracket[i]; a <- cl$away_bracket[i]
+    if (!(h %in% r1_teams_seen) && !(a %in% r1_teams_seen)) {
+      r1_rows <- c(r1_rows, i)
+      r1_teams_seen <- c(r1_teams_seen, h, a)
+    }
+    if (length(r1_rows) == 32) break
+  }
+
+  r1 <- cl[r1_rows]
+
+  # Build lookup: bracket_name -> R1 win probability
+  wp_lookup <- list()
+  for (i in seq_len(nrow(r1))) {
+    wp_lookup[[r1$home_bracket[i]]] <- r1$home_win_prob[i]
+    wp_lookup[[r1$away_bracket[i]]] <- 1 - r1$home_win_prob[i]
+  }
+
+  wp_lookup
+}
+
+LOG_SCALE <- 0.0917
 
 sim_file <- file.path(script_dir, sprintf("sim_results_%d.rds", target_year))
 if (file.exists(sim_file)) {
+  # Priority 1: Simulation results (all rounds)
   cat(sprintf("Loading sim results: %s\n", basename(sim_file)))
   sim <- readRDS(sim_file)
   ri <- sim$round_info
@@ -322,24 +402,45 @@ if (file.exists(sim_file)) {
   for (rd in 1:6) teams[, paste0("wp_R", rd) := trp[, rd]]
   has_sim <- TRUE
 } else {
-  cat("No sim file found. Approximating win probs from KenPom.\n")
-  LOG_SCALE <- 0.0917
-  # R1: use bracket matchup (1v16, 8v9, etc.)
-  for (g in 1:32) {
-    i <- 2*g - 1; j <- 2*g
-    p <- 1 / (1 + exp(-LOG_SCALE * (teams$AdjEM[i] - teams$AdjEM[j])))
-    teams[i, wp_R1 := p]
-    teams[j, wp_R1 := 1 - p]
+  has_sim <- FALSE
+
+  # Priority 2: Closing lines for R1
+  cl_wp <- load_closing_lines(target_year, teams$name)
+
+  if (!is.null(cl_wp) && length(cl_wp) >= 60) {
+    n_matched <- 0
+    for (i in seq_len(nrow(teams))) {
+      wp <- cl_wp[[teams$name[i]]]
+      if (!is.null(wp)) {
+        teams[i, wp_R1 := wp]
+        n_matched <- n_matched + 1
+      } else {
+        # Fallback for unmatched: use KenPom logistic
+        j <- if (i %% 2 == 1) i + 1 else i - 1
+        teams[i, wp_R1 := 1 / (1 + exp(-LOG_SCALE * (teams$AdjEM[i] - teams$AdjEM[j])))]
+        cat(sprintf("  WARNING: No closing line for %s, using KenPom fallback\n",
+                    teams$name[i]))
+      }
+    }
+    cat(sprintf("Using closing lines for R1 win probabilities (%d/%d teams matched)\n",
+                n_matched, nrow(teams)))
+  } else {
+    # Priority 3: KenPom logistic approximation
+    cat("No closing lines found. Approximating win probs from KenPom.\n")
+    for (g in 1:32) {
+      i <- 2*g - 1; j <- 2*g
+      p <- 1 / (1 + exp(-LOG_SCALE * (teams$AdjEM[i] - teams$AdjEM[j])))
+      teams[i, wp_R1 := p]
+      teams[j, wp_R1 := 1 - p]
+    }
   }
+
   # R2+: rough approximation (compound probabilities)
   for (rd in 2:6) {
     prev <- paste0("wp_R", rd - 1)
-    # Expected opponent is ~average of possible opponents, weighted by their advance prob
-    # Simplification: multiply by ~0.55-0.65 per round (average advance rate)
     decay <- c(0.65, 0.60, 0.55, 0.50, 0.45)[rd - 1]
     teams[, paste0("wp_R", rd) := get(prev) * decay]
   }
-  has_sim <- FALSE
 }
 
 # ==============================================================================
@@ -483,12 +584,27 @@ build_r1_features <- function(yr) {
   bt[is.na(AdjEM), AdjEM := -15]
   setorder(bt, team_id)
 
-  # R1 win probabilities
-  for (g in 1:32) {
-    ii <- 2*g - 1; jj <- 2*g
-    p <- 1 / (1 + exp(-0.0917 * (bt$AdjEM[ii] - bt$AdjEM[jj])))
-    bt[ii, wp := p]
-    bt[jj, wp := 1 - p]
+  # R1 win probabilities: prefer closing lines, fall back to KenPom logistic
+  cl_wp <- load_closing_lines(yr, bt$name)
+  if (!is.null(cl_wp) && length(cl_wp) >= 50) {
+    bt[, wp := 0]
+    for (i in seq_len(nrow(bt))) {
+      w <- cl_wp[[bt$name[i]]]
+      if (!is.null(w)) {
+        bt$wp[i] <- w
+      } else {
+        # Fallback for unmatched teams
+        j <- if (i %% 2 == 1) i + 1 else i - 1
+        bt$wp[i] <- 1 / (1 + exp(-0.0917 * (bt$AdjEM[i] - bt$AdjEM[j])))
+      }
+    }
+  } else {
+    for (g in 1:32) {
+      ii <- 2*g - 1; jj <- 2*g
+      p <- 1 / (1 + exp(-0.0917 * (bt$AdjEM[ii] - bt$AdjEM[jj])))
+      bt[ii, wp := p]
+      bt[jj, wp := 1 - p]
+    }
   }
 
   # R2 win probabilities (compound: must win R1, then beat expected R2 opponent)
