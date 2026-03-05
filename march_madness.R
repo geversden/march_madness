@@ -72,74 +72,14 @@ teams <- data.frame(
 )
 
 # ==============================================================================
-# KENPOM NAME ALIASES
-# Map bracket names to KenPom CSV names
+# KENPOM NAME ALIASES (from team_names.csv dictionary)
 # ==============================================================================
 
-kp_alias <- c(
-  # "State" schools
-  "Michigan State"    = "Michigan St.",
-  "Iowa State"        = "Iowa St.",
-  "Mississippi State" = "Mississippi St.",
-  "Utah State"        = "Utah St.",
-  "Colorado State"    = "Colorado St.",
-  "Oklahoma State"    = "Oklahoma St.",
-  "Ohio State"        = "Ohio St.",
-  "Florida State"     = "Florida St.",
-  "Murray State"      = "Murray St.",
-  "Norfolk State"     = "Norfolk St.",
-  "Alabama State"     = "Alabama St.",
-  "Georgia State"     = "Georgia St.",
-  "Washington State"  = "Washington St.",
-  "Cleveland State"   = "Cleveland St.",
-  "Jacksonville State" = "Jacksonville St.",
-  "McNeese State"     = "McNeese St.",
-  "Morehead State"    = "Morehead St.",
-  "Grambling State"   = "Grambling St.",
-  "Kennesaw State"    = "Kennesaw St.",
-  "Kansas State"      = "Kansas St.",
-  "Boise State"       = "Boise St.",
-  "Kent State"        = "Kent St.",
-  "Oregon State"      = "Oregon St.",
-  "San Diego State"   = "San Diego St.",
-  "Wright State"      = "Wright St.",
-  "Arizona State"     = "Arizona St.",
-  "Penn State"        = "Penn St.",
-
-  # Nicknames / abbreviations
-  "Ole Miss"          = "Mississippi",
-  "UConn"             = "Connecticut",
-  "Omaha"             = "Nebraska Omaha",
-  "NC State"          = "N.C. State",
-  "McNeese"           = "McNeese St.",
-  "Grambling"         = "Grambling St.",
-  "SIU Edwardsville"  = "SIUE",
-  "UCF"               = "Central Florida",
-
-  # Mount / Saint variants
-  "Mount St. Mary's"  = "Mount St. Mary's",
-  "Saint Mary's"      = "Saint Mary's",
-  "Saint Peter's"     = "Saint Peter's",
-  "St. John's"        = "St. John's",
-  "St. Bonaventure"   = "St. Bonaventure",
-  "St. Peter's"       = "Saint Peter's",
-
-  # Other
-  "Loyola Chicago"    = "Loyola Chicago",
-  "UNC Greensboro"    = "UNC Greensboro",
-  "UNC Wilmington"    = "UNC Wilmington",
-  "UNC Asheville"     = "UNC Asheville",
-  "UC Santa Barbara"  = "UC Santa Barbara",
-  "UC San Diego"      = "UC San Diego",
-  "Texas A&M-Corpus Christi" = "Texas A&M Corpus Chris",
-  "College of Charleston" = "Charleston",
-  "Cal State Fullerton" = "Cal St. Fullerton",
-  "Long Beach State"  = "Long Beach St.",
-  "South Dakota State" = "South Dakota St.",
-  "New Mexico State"  = "New Mexico St.",
-  "Montana State"     = "Montana St.",
-  "Miami"             = "Miami FL"
-)
+team_dict_file <- file.path(script_dir, "team_names.csv")
+if (!file.exists(team_dict_file)) stop("Cannot find team_names.csv")
+team_dict <- read.csv(team_dict_file, stringsAsFactors = FALSE)
+kp_alias <- setNames(team_dict$kenpom_name, team_dict$bracket_name)
+cat(sprintf("Loaded team name dictionary: %d entries\n", length(kp_alias)))
 
 resolve_name <- function(name) {
   if (name %in% names(kp_alias)) kp_alias[[name]] else name
@@ -185,6 +125,80 @@ cat("\n")
 bracket_order <- teams$team_id  # already in correct matchup order
 
 # ==============================================================================
+# LOAD R1 CLOSING LINES (market-implied win probabilities)
+# ==============================================================================
+
+cl_file <- file.path(script_dir, "closing_lines",
+                     sprintf("ncaat_%d_closing_lines.csv", YEAR))
+
+r1_win_probs <- numeric(0)  # empty = fall back to KenPom logistic in C++
+
+if (file.exists(cl_file)) {
+  cl <- read.csv(cl_file, stringsAsFactors = FALSE)
+
+  # Build closing-lines name → bracket name mapping from dictionary
+  cl_to_bracket <- setNames(team_dict$bracket_name, team_dict$closing_lines_name)
+
+  resolve_cl_name <- function(cl_name) {
+    # Dictionary lookup first
+    if (cl_name %in% names(cl_to_bracket)) return(cl_to_bracket[[cl_name]])
+    # Prefix match: strip mascot suffix
+    for (bn in teams$name) {
+      if (startsWith(cl_name, bn)) return(bn)
+    }
+    cl_name
+  }
+
+  cl$home_bracket <- sapply(cl$home_team, resolve_cl_name)
+  cl$away_bracket <- sapply(cl$away_team, resolve_cl_name)
+
+  # Identify R1 games: first 32 unique matchups by date
+  cl$game_date <- as.Date(cl$date)
+  cl <- cl[order(cl$game_date), ]
+  r1_teams_seen <- character(0)
+  r1_rows <- integer(0)
+  for (i in seq_len(nrow(cl))) {
+    h <- cl$home_bracket[i]; a <- cl$away_bracket[i]
+    if (!(h %in% r1_teams_seen) && !(a %in% r1_teams_seen)) {
+      r1_rows <- c(r1_rows, i)
+      r1_teams_seen <- c(r1_teams_seen, h, a)
+    }
+    if (length(r1_rows) == 32) break
+  }
+  r1_cl <- cl[r1_rows, ]
+
+  # Build per-team win probability lookup
+  cl_wp <- list()
+  for (i in seq_len(nrow(r1_cl))) {
+    cl_wp[[r1_cl$home_bracket[i]]] <- r1_cl$home_win_prob[i]
+    cl_wp[[r1_cl$away_bracket[i]]] <- 1 - r1_cl$home_win_prob[i]
+  }
+
+  # Build R1 win probs in bracket matchup order (32 games)
+  # Game g: team at position 2g-1 vs team at position 2g
+  r1_probs <- numeric(32)
+  n_matched <- 0
+  for (g in 1:32) {
+    team_a <- teams$name[2*g - 1]
+    wp_a <- cl_wp[[team_a]]
+
+    if (!is.null(wp_a)) {
+      r1_probs[g] <- wp_a
+      n_matched <- n_matched + 1
+    } else {
+      # Fallback to KenPom logistic
+      r1_probs[g] <- 1 / (1 + exp(-0.0917 * (teams$rating[2*g-1] - teams$rating[2*g])))
+      cat(sprintf("  WARNING: No closing line for %s, using KenPom fallback\n", team_a))
+    }
+  }
+  r1_win_probs <- r1_probs
+  cat(sprintf("Using closing lines for R1 win probabilities (%d/32 games matched)\n\n",
+              n_matched))
+} else {
+  cat("No closing lines found, using KenPom ratings for all rounds\n\n")
+}
+
+# ==============================================================================
 # RUN SIMULATIONS
 # ==============================================================================
 
@@ -200,7 +214,8 @@ cat(sprintf("Simulating %s tournaments ...\n\n",
             format(N_SIMS, big.mark = ",")))
 
 t0      <- proc.time()
-results <- run_tournament_sims(teams$rating, bracket_order, N_SIMS, UPDATE_FACTOR)
+results <- run_tournament_sims(teams$rating, bracket_order, N_SIMS, UPDATE_FACTOR,
+                               r1_win_probs)
 elapsed <- (proc.time() - t0)["elapsed"]
 
 cat(sprintf("Done in %.2f seconds\n\n", elapsed))
