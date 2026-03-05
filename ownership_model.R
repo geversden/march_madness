@@ -57,10 +57,14 @@ load_kenpom <- function(year) {
   if (!file.exists(f)) return(NULL)
   dt <- fread(f)
   if ("adj_em" %in% names(dt)) setnames(dt, "adj_em", "AdjEM")
-  if ("NetRtg" %in% names(dt)) setnames(dt, "NetRtg", "AdjEM")
+  if ("NetRtg" %in% names(dt)) {
+    # KenPom CSVs have multiple NetRtg columns; rename only the first (AdjEM)
+    idx <- which(names(dt) == "NetRtg")[1]
+    names(dt)[idx] <- "AdjEM"
+  }
   if ("team" %in% names(dt)) setnames(dt, "team", "Team")
   if ("rank" %in% names(dt)) setnames(dt, "rank", "Rank")
-  dt[, AdjEM := as.numeric(AdjEM)]
+  dt[, AdjEM := suppressWarnings(as.numeric(AdjEM))]
   dt <- dt[!is.na(AdjEM) & Team != "" & Team != "Team"]
   dt$Team <- gsub("\\s*\\d+$", "", trimws(dt$Team))
   dt[, year := year]
@@ -282,9 +286,12 @@ kp_file <- if (file.exists(kp_year_file)) kp_year_file else
 
 kp <- fread(kp_file)
 if ("adj_em" %in% names(kp)) setnames(kp, "adj_em", "AdjEM")
-if ("NetRtg" %in% names(kp)) setnames(kp, "NetRtg", "AdjEM")
+if ("NetRtg" %in% names(kp)) {
+  idx <- which(names(kp) == "NetRtg")[1]
+  names(kp)[idx] <- "AdjEM"
+}
 if ("team" %in% names(kp)) setnames(kp, "team", "Team")
-kp[, AdjEM := as.numeric(AdjEM)]
+kp[, AdjEM := suppressWarnings(as.numeric(AdjEM))]
 kp <- kp[!is.na(AdjEM)]
 kp$Team <- gsub("\\s*\\d+$", "", trimws(kp$Team))
 
@@ -520,10 +527,13 @@ build_r1_features <- function(yr) {
 
   br <- fread(bf)
   kpyr <- fread(kf)
-  if ("NetRtg" %in% names(kpyr)) setnames(kpyr, names(kpyr)[which(names(kpyr) == "NetRtg")[1]], "AdjEM")
+  if ("NetRtg" %in% names(kpyr)) {
+    idx <- which(names(kpyr) == "NetRtg")[1]
+    names(kpyr)[idx] <- "AdjEM"
+  }
   if ("adj_em" %in% names(kpyr)) setnames(kpyr, "adj_em", "AdjEM")
   if ("team" %in% names(kpyr)) setnames(kpyr, "team", "Team")
-  kpyr[, AdjEM := as.numeric(AdjEM)]
+  kpyr[, AdjEM := suppressWarnings(as.numeric(AdjEM))]
   kpyr <- kpyr[!is.na(AdjEM) & Team != "" & Team != "Team"]
   kpyr$Team <- gsub("\\s*\\d+$", "", trimws(kpyr$Team))
 
