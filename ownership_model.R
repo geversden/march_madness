@@ -91,39 +91,8 @@ if (file.exists(team_dict_file)) {
   cl_to_bracket <- setNames(team_dict$bracket_name, team_dict$closing_lines_name)
   cat(sprintf("Loaded team name dictionary: %d entries\n", nrow(team_dict)))
 } else {
-  cat("WARNING: team_names.csv not found, using hardcoded aliases\n")
-  kp_alias <- c(
-    "Michigan State"="Michigan St.", "Iowa State"="Iowa St.",
-    "Mississippi State"="Mississippi St.", "Utah State"="Utah St.",
-    "Colorado State"="Colorado St.", "Oklahoma State"="Oklahoma St.",
-    "Ohio State"="Ohio St.", "Florida State"="Florida St.",
-    "Murray State"="Murray St.", "McNeese State"="McNeese",
-    "Morehead State"="Morehead St.", "Kansas State"="Kansas St.",
-    "Boise State"="Boise St.", "Kent State"="Kent St.",
-    "Oregon State"="Oregon St.", "San Diego State"="San Diego St.",
-    "Arizona State"="Arizona St.", "Penn State"="Penn St.",
-    "South Dakota State"="South Dakota St.", "Montana State"="Montana St.",
-    "Jacksonville State"="Jacksonville St.", "Washington State"="Washington St.",
-    "Long Beach State"="Long Beach St.", "Wright State"="Wright St.",
-    "Ole Miss"="Mississippi", "UConn"="Connecticut",
-    "NC State"="N.C. State", "McNeese"="McNeese",
-    "Saint Mary's"="Saint Mary's", "St. John's"="St. John's",
-    "St. Bonaventure"="St. Bonaventure", "St. Peter's"="Saint Peter's",
-    "Saint Peter's"="Saint Peter's", "Loyola Chicago"="Loyola Chicago",
-    "Colorado St"="Colorado St.", "Miami FL"="Miami FL", "Miami"="Miami FL",
-    "Fla Atlantic"="Florida Atlantic", "St. Marys"="Saint Mary's",
-    "NM State"="New Mexico St.", "Va Tech"="Virginia Tech",
-    "North Carolina St."="N.C. State", "San Diego St."="San Diego St.",
-    "Michigan St"="Michigan St.", "Michigan St."="Michigan St.",
-    "Iowa St."="Iowa St.", "Colorado St."="Colorado St.",
-    "McNeese St."="McNeese", "Omaha"="Nebraska Omaha",
-    "SIU Edwardsville"="SIUE", "UCF"="Central Florida",
-    "UC San Diego"="UC San Diego", "Mount St. Mary's"="Mount St. Mary's",
-    "College of Charleston"="Charleston", "Grambling"="Grambling St.",
-    "Norfolk State"="Norfolk St.", "Alabama State"="Alabama St.",
-    "Kennesaw State"="Kennesaw St.", "Georgia State"="Georgia St."
-  )
-  cl_to_bracket <- NULL
+  stop("team_names.csv not found at: ", team_dict_file,
+       "\nThis file is required for team name resolution.")
 }
 
 resolve_name <- function(name) {
@@ -465,11 +434,6 @@ get_opponent_idx <- function(team_idx, round_num) {
   }
 }
 
-# For each team, who is their R1 opponent?
-teams[, r1_opp_idx := ifelse(team_id %% 2 == 1, team_id + 1, team_id - 1)]
-teams[, r1_opp_name := teams$name[r1_opp_idx]]
-teams[, r1_opp_seed := teams$seed[r1_opp_idx]]
-
 cat("\n")
 
 # ==============================================================================
@@ -543,19 +507,6 @@ SEED_TB_COEFF <- 1.2  # strength of seed tiebreaker preference
 # peaks for teams with the best feature combinations.
 
 cat("Calibrating M3 (log-linear softmax) on historical R1 data...\n")
-
-# Copy bracket and KenPom files if needed
-for (yr in HISTORICAL_YEARS) {
-  for (subdir in c("brackets", "kenpom_data")) {
-    pattern <- if (subdir == "brackets") "bracket_%d.csv" else "kenpom_%d.csv"
-    src <- file.path(script_dir, subdir, sprintf(pattern, yr))
-    if (!file.exists(src)) {
-      alt <- file.path("/Users/grahameversden/Documents/GitHub/Cfb_survivor/march_maddness",
-                       subdir, sprintf(pattern, yr))
-      if (file.exists(alt)) file.copy(alt, src)
-    }
-  }
-}
 
 bracket_dir <- file.path(script_dir, "brackets")
 
@@ -644,7 +595,6 @@ build_r1_features <- function(yr) {
 hist_features <- rbindlist(lapply(HISTORICAL_YEARS, build_r1_features))
 
 # Match to actual R1 usage
-hist_features[, kp_name2 := kp_name]  # for matching
 r1_actual <- hist_usage[Round == 1]
 r1_actual[, kp_name := sapply(Team, resolve_name)]
 
