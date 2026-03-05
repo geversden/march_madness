@@ -944,7 +944,7 @@ for (rd in 1:6) {
 # M3 (dynamic/log-linear) gets highest weight since it's calibrated from
 # historical data with all 5 factors. M1 (seed baseline) gets modest weight
 # as a prior. M2 (strength softmax) fills in 3-seed / strength gaps.
-BLEND_W <- c(m1 = 0.15, m2 = 0.35, m3 = 0.50)
+BLEND_W <- c(m1 = 0.0, m2 = 0.0, m3 = 1.0)
 
 for (rd in 1:6) {
   blend_raw <- BLEND_W["m1"] * teams[[paste0("m1_R", rd)]] +
