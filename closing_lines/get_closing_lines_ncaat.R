@@ -6,8 +6,9 @@
 # Outputs per game: home_team, away_team, date, home_spread, home_win_prob
 #
 # Usage:  Rscript get_closing_lines_ncaat.R [YEAR]
-#         Rscript get_closing_lines_ncaat.R 2025
+#         Rscript get_closing_lines_ncaat.R 2026
 #         Rscript get_closing_lines_ncaat.R all
+#         Rscript get_closing_lines_ncaat.R 2026 --live   # current/live odds
 # ==============================================================================
 
 library(httr2)
@@ -72,6 +73,14 @@ tourney_dates <- list(
     "2025-03-20", "2025-03-21", "2025-03-22", "2025-03-23",
     "2025-03-27", "2025-03-28", "2025-03-29", "2025-03-30",
     "2025-04-05", "2025-04-07", "2025-04-08"
+  )),
+  "2026" = as.Date(c(
+    "2026-03-17", "2026-03-18",
+    "2026-03-19", "2026-03-20", "2026-03-21", "2026-03-22",
+    "2026-03-26", "2026-03-27",
+    "2026-03-28", "2026-03-29",
+    "2026-04-04",
+    "2026-04-06"
   ))
 )
 
@@ -149,7 +158,31 @@ odds_to_bracket <- c(
   "UCF Knights"             = "UCF",
   "UNC Wilmington Seahawks" = "UNC Wilmington",
   "UC San Diego Tritons"    = "UC San Diego",
-  "Omaha Mavericks"         = "Omaha"
+  "Omaha Mavericks"         = "Omaha",
+
+  # 2026 additions
+  "VCU Rams"                    = "VCU",
+  "Virginia Commonwealth Rams"  = "VCU",
+  "SMU Mustangs"                = "SMU",
+  "Southern Methodist Mustangs" = "SMU",
+  "UMBC Retrievers"             = "UMBC",
+  "LIU Sharks"                  = "LIU",
+  "Long Island Sharks"          = "LIU",
+  "Cal Baptist Lancers"         = "Cal Baptist",
+  "California Baptist Lancers"  = "Cal Baptist",
+  "South Florida Bulls"         = "South Florida",
+  "USF Bulls"                   = "South Florida",
+  "North Dakota St Bison"       = "North Dakota State",
+  "Northern Iowa Panthers"      = "Northern Iowa",
+  "Prairie View A&M Panthers"   = "Prairie View A&M",
+  "Prairie View Panthers"        = "Prairie View A&M",
+  "Tennessee St Tigers"         = "Tennessee State",
+  "Miami OH RedHawks"           = "Miami OH",
+  "Miami (OH) RedHawks"         = "Miami OH",
+  "McNeese St Cowboys"          = "McNeese State",
+  "Queens Royals"               = "Queens",
+  "Hawaii Rainbow Warriors"     = "Hawaii",
+  "Hawai'i Rainbow Warriors"    = "Hawaii"
 )
 
 # Try to resolve an odds API team name to a bracket team name
@@ -260,23 +293,109 @@ fetch_day <- function(game_date) {
 }
 
 # ==============================================================================
+# FETCH LIVE/CURRENT ODDS (non-historical endpoint)
+# ==============================================================================
+
+fetch_live <- function() {
+  cat("  Fetching live odds ... ")
+
+  resp <- tryCatch({
+    request(paste0(
+      "https://api.the-odds-api.com/v4/sports/", SPORT, "/odds"
+    )) |>
+      req_url_query(
+        apiKey     = ODDS_API_KEY,
+        regions    = "us,us2",
+        markets    = "h2h,spreads",
+        oddsFormat = "american"
+      ) |>
+      req_perform()
+  }, error = function(e) {
+    cat(sprintf("ERROR: %s\n", conditionMessage(e)))
+    return(NULL)
+  })
+
+  if (is.null(resp)) return(NULL)
+
+  remaining <- resp_header(resp, "x-requests-remaining")
+  if (!is.null(remaining)) cat(sprintf("(API requests remaining: %s) ", remaining))
+
+  events <- fromJSON(resp_body_string(resp), simplifyVector = FALSE)
+
+  if (length(events) == 0) {
+    cat("0 events\n")
+    return(NULL)
+  }
+
+  games <- map_dfr(events, function(ev) {
+    ct   <- ymd_hms(ev$commence_time, quiet = TRUE)
+    home <- ev$home_team
+    away <- ev$away_team
+
+    game_date_et <- format(with_tz(ct, "America/New_York"), "%Y-%m-%d")
+
+    home_spread <- NA_real_
+    home_ml     <- NA_integer_
+    away_ml     <- NA_integer_
+
+    bm_list   <- to_list(ev$bookmakers)
+    preferred <- Filter(function(b) b$key == BOOKMAKER, bm_list)
+    fallback  <- Filter(function(b) b$key != BOOKMAKER, bm_list)
+
+    for (bm in c(preferred, fallback)) {
+      for (mkt in to_list(bm$markets)) {
+        for (o in to_list(mkt$outcomes)) {
+          if (mkt$key == "spreads" && o$name == home && is.na(home_spread))
+            home_spread <- as.numeric(null_na(o$point))
+          if (mkt$key == "h2h" && o$name == home && is.na(home_ml))
+            home_ml <- as.integer(null_na(o$price))
+          if (mkt$key == "h2h" && o$name == away && is.na(away_ml))
+            away_ml <- as.integer(null_na(o$price))
+        }
+      }
+    }
+
+    h_imp <- american_to_prob(home_ml)
+    a_imp <- american_to_prob(away_ml)
+    home_win_prob <- if (!is.na(h_imp) && !is.na(a_imp) && (h_imp + a_imp) > 0) {
+      round(h_imp / (h_imp + a_imp), 4)
+    } else NA_real_
+
+    tibble(
+      home_team     = home,
+      away_team     = away,
+      date          = as.Date(game_date_et),
+      home_spread   = home_spread,
+      home_win_prob = home_win_prob
+    )
+  })
+
+  cat(sprintf("%d events total\n", nrow(games)))
+  return(games)
+}
+
+# ==============================================================================
 # MAIN
 # ==============================================================================
 
 args <- commandArgs(trailingOnly = TRUE)
+LIVE_MODE <- "--live" %in% tolower(args)
+args <- args[tolower(args) != "--live"]
+
 if (length(args) >= 1 && tolower(args[1]) == "all") {
   years <- names(tourney_dates)
 } else if (length(args) >= 1) {
   years <- args[1]
 } else {
-  years <- "2025"
+  years <- "2026"
 }
 
 out_dir <- file.path(script_dir, "closing_lines")
 dir.create(out_dir, showWarnings = FALSE)
 
 for (yr in years) {
-  cat(sprintf("\n=== %s NCAA Tournament ===\n", yr))
+  cat(sprintf("\n=== %s NCAA Tournament%s ===\n", yr,
+              if (LIVE_MODE) " (LIVE ODDS)" else ""))
 
   dates <- tourney_dates[[yr]]
   if (is.null(dates)) {
@@ -293,7 +412,16 @@ for (yr in years) {
     NULL
   }
 
-  all_games <- map_dfr(dates, fetch_day)
+  if (LIVE_MODE) {
+    all_games <- fetch_live()
+    # Filter to tournament date range
+    if (!is.null(all_games) && nrow(all_games) > 0) {
+      all_games <- all_games |>
+        filter(date >= min(dates) & date <= max(dates))
+    }
+  } else {
+    all_games <- map_dfr(dates, fetch_day)
+  }
 
   if (is.null(all_games) || nrow(all_games) == 0) {
     cat(sprintf("No games found for %s\n", yr))
