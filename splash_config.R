@@ -4,11 +4,20 @@
 # Contest format definition and tournament day schedule for Splash Sports
 # NCAA tournament survivor pools.
 #
-# MAIN FORMAT:
+# FORMAT A (E8 combined):
 #   Pick 1 team per day in R1 (2 days), R2 (2 days), S16 (2 days).
-#   Pick 2 teams in E8 (don't have to be from different days).
+#   Pick 2 teams in E8 (any 2 of 4 games, don't have to be from different days).
 #   Pick 1 in Final Four, 1 in Championship.
 #   Total: 10 picks. No team reuse. One loss = eliminated.
+#
+# FORMAT B (E8 split by day):
+#   Same as Format A through S16.
+#   Pick 1 team on E8 Day 1 (Sat), 1 team on E8 Day 2 (Sun).
+#   Pick 1 in Final Four, 1 in Championship.
+#   Total: 10 picks. No team reuse. One loss = eliminated.
+#
+# The E8 split significantly constrains strategy: you MUST have a viable
+# pick on each E8 day, which changes save/future-value in earlier rounds.
 #
 # Usage:
 #   source("splash_config.R")
@@ -64,12 +73,28 @@ SPLASH_SLOTS <- list(
     label       = "Sweet 16 - Day 2 (Fri Mar 27)",
     game_indices = NULL
   ),
+  # Format A: pick any 2 of 4 E8 games
   E8 = list(
     slot_id     = "E8",
     round_num   = 4,
     n_picks     = 2,
     label       = "Elite 8 (Sat-Sun Mar 28-29)",
     game_indices = 57:60
+  ),
+  # Format B: one pick per E8 day (set game_indices below after E8 schedule known)
+  E8_d1 = list(
+    slot_id     = "E8_d1",
+    round_num   = 4,
+    n_picks     = 1,
+    label       = "Elite 8 - Day 1 (Sat Mar 28)",
+    game_indices = NULL  # set below
+  ),
+  E8_d2 = list(
+    slot_id     = "E8_d2",
+    round_num   = 4,
+    n_picks     = 1,
+    label       = "Elite 8 - Day 2 (Sun Mar 29)",
+    game_indices = NULL  # set below
   ),
   FF = list(
     slot_id     = "FF",
@@ -87,9 +112,35 @@ SPLASH_SLOTS <- list(
   )
 )
 
-# Ordered slot IDs for iteration
-SLOT_ORDER <- c("R1_d1", "R1_d2", "R2_d1", "R2_d2",
-                "S16_d1", "S16_d2", "E8", "FF", "CHAMP")
+# ==============================================================================
+# FORMAT VARIANTS
+# Each contest uses one of these slot orderings.
+# Format A: E8 combined (pick any 2 of 4)
+# Format B: E8 split by day (pick 1 per day)
+# ==============================================================================
+
+SLOT_ORDER_A <- c("R1_d1", "R1_d2", "R2_d1", "R2_d2",
+                  "S16_d1", "S16_d2", "E8", "FF", "CHAMP")
+
+SLOT_ORDER_B <- c("R1_d1", "R1_d2", "R2_d1", "R2_d2",
+                  "S16_d1", "S16_d2", "E8_d1", "E8_d2", "FF", "CHAMP")
+
+# All possible slot IDs (superset) — used for state columns
+ALL_SLOT_IDS <- c("R1_d1", "R1_d2", "R2_d1", "R2_d2",
+                  "S16_d1", "S16_d2", "E8", "E8_d1", "E8_d2", "FF", "CHAMP")
+
+# Default: Format A (can be overridden per contest)
+SLOT_ORDER <- SLOT_ORDER_A
+
+#' Get the slot order for a given format
+#' @param format Character "A" or "B"
+get_slot_order <- function(format = "A") {
+  switch(toupper(format),
+    "A" = SLOT_ORDER_A,
+    "B" = SLOT_ORDER_B,
+    stop("Unknown format: ", format, ". Use 'A' (E8 combined) or 'B' (E8 split).")
+  )
+}
 
 # ==============================================================================
 # 2026 GAME-DAY MAPPING
@@ -175,6 +226,21 @@ S16_FRI_GAMES <- c(53, 54, 55, 56)  # West + Midwest (update when schedule annou
 SPLASH_SLOTS$S16_d1$game_indices <- S16_THU_GAMES
 SPLASH_SLOTS$S16_d2$game_indices <- S16_FRI_GAMES
 
+# E8 game indices: 57-60 (4 games)
+# E8 day split depends on NCAA schedule (announced after S16).
+# Typical pattern: 2 games Saturday, 2 games Sunday.
+# E8 game 57 <- S16 games (49,50) -> East region champion matchup
+# E8 game 58 <- S16 games (51,52) -> South region champion matchup
+# E8 game 59 <- S16 games (53,54) -> West region champion matchup
+# E8 game 60 <- S16 games (55,56) -> Midwest region champion matchup
+#
+# Default: East+South on Sat (57,58), West+Midwest on Sun (59,60)
+# UPDATE when NCAA publishes E8 schedule.
+E8_SAT_GAMES <- c(57, 58)
+E8_SUN_GAMES <- c(59, 60)
+
+SPLASH_SLOTS$E8_d1$game_indices <- E8_SAT_GAMES
+SPLASH_SLOTS$E8_d2$game_indices <- E8_SUN_GAMES
 
 # ==============================================================================
 # HELPER FUNCTIONS
@@ -245,19 +311,28 @@ slot_col_name <- function(slot_id) {
   paste0("pick_", slot_id)
 }
 
-#' Get all slot column names
+#' Get all slot column names (superset across all formats)
 all_slot_cols <- function() {
-  sapply(SLOT_ORDER, slot_col_name, USE.NAMES = FALSE)
+  sapply(ALL_SLOT_IDS, slot_col_name, USE.NAMES = FALSE)
 }
 
-cat("Splash config loaded: 9 slots, 10 total picks\n")
+#' Get slot column names for a specific format
+format_slot_cols <- function(format = "A") {
+  sapply(get_slot_order(format), slot_col_name, USE.NAMES = FALSE)
+}
+
+cat("Splash config loaded\n")
+cat("  Format A: 9 slots, 10 picks (E8 combined: any 2 of 4)\n")
+cat("  Format B: 10 slots, 10 picks (E8 split: 1 per day)\n")
 cat(sprintf("  R64 Thu: %d games | R64 Fri: %d games\n",
             length(R64_THU_GAMES), length(R64_FRI_GAMES)))
 cat(sprintf("  R32 Sat: %d games | R32 Sun: %d games\n",
             length(R32_SAT_GAMES), length(R32_SUN_GAMES)))
 cat(sprintf("  S16 Thu: %d games | S16 Fri: %d games\n",
             length(S16_THU_GAMES), length(S16_FRI_GAMES)))
-cat(sprintf("  E8: %d games | FF: %d games | Champ: %d game\n",
+cat(sprintf("  E8: %d games (combined) | E8 Sat: %d | E8 Sun: %d\n",
             length(SPLASH_SLOTS$E8$game_indices),
+            length(E8_SAT_GAMES), length(E8_SUN_GAMES)))
+cat(sprintf("  FF: %d games | Champ: %d game\n",
             length(SPLASH_SLOTS$FF$game_indices),
             length(SPLASH_SLOTS$CHAMP$game_indices)))

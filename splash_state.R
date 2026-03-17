@@ -28,12 +28,18 @@ library(httr)
 #'   entry_fee   (numeric)   - entry fee per entry
 #'   prize_pool  (numeric)   - total prize pool
 #'   n_entries   (integer)   - how many entries WE have in this contest
+#'   format      (character) - optional, "A" (E8 combined) or "B" (E8 split). Default "A".
 #' @return data.table of entry state
 init_portfolio <- function(contests_df) {
   contests_df <- as.data.table(contests_df)
   required_cols <- c("contest_id", "contest_size", "entry_fee", "prize_pool", "n_entries")
   missing <- setdiff(required_cols, names(contests_df))
   if (length(missing) > 0) stop("Missing columns: ", paste(missing, collapse = ", "))
+
+  # Default format to "A" if not provided
+  if (!"format" %in% names(contests_df)) {
+    contests_df[, format := "A"]
+  }
 
   # Expand: one row per entry
   expanded <- contests_df[rep(seq_len(.N), n_entries)]
@@ -43,14 +49,18 @@ init_portfolio <- function(contests_df) {
   expanded[, n_entries := NULL]
   expanded[, alive := TRUE]
 
-  # Add pick columns (all NA)
-  for (slot_id in SLOT_ORDER) {
+  # Add pick columns for ALL possible slots (superset across formats)
+  # Entries only use the columns relevant to their format;
+  # unused columns stay NA.
+  for (slot_id in ALL_SLOT_IDS) {
     col <- slot_col_name(slot_id)
     expanded[, (col) := NA_integer_]
   }
 
-  cat(sprintf("Portfolio initialized: %d entries across %d contests\n",
-              nrow(expanded), nrow(contests_df)))
+  n_a <- sum(expanded$format == "A")
+  n_b <- sum(expanded$format == "B")
+  cat(sprintf("Portfolio initialized: %d entries across %d contests (%d format A, %d format B)\n",
+              nrow(expanded), nrow(contests_df), n_a, n_b))
   expanded
 }
 
@@ -200,6 +210,10 @@ group_entries <- function(state) {
     paste(vals, collapse = ",")
   }), .SDcols = pick_cols]
 
+  # Include format in grouping if it exists
+  group_by_cols <- c("contest_id", "used_hash")
+  if ("format" %in% names(alive)) group_by_cols <- c(group_by_cols, "format")
+
   groups <- alive[, .(
     entry_ids    = list(entry_id),
     n_entries    = .N,
@@ -207,7 +221,10 @@ group_entries <- function(state) {
     entry_fee    = entry_fee[1],
     prize_pool   = prize_pool[1],
     used_teams   = list(as.integer(strsplit(used_hash[1], ",")[[1]]))
-  ), by = .(contest_id, used_hash)]
+  ), by = group_by_cols]
+
+  # Ensure format column exists
+  if (!"format" %in% names(groups)) groups[, format := "A"]
 
   groups[, group_id := .I]
   groups[, used_hash := NULL]
