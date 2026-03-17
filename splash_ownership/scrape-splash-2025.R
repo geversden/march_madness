@@ -134,15 +134,15 @@ entries <-
   unnest_wider(resp) |>
   unnest_wider(picks) |>
   rename(
-    day1 = `b071bc1b-0242-4889-9af6-42239b934fca`,
-    day2 = `bf851ad7-d814-468f-8e20-c8c469bab8a2`,
-    day3 = `82fc6804-c444-4d53-af8a-3a527c318fef`,
-    day4 = `5d7846ea-38a8-4aa9-84a3-b6e44da95b26`,
-    day5 = `824beac4-fd0b-4563-aa65-eb21f4f1d417`,
-    day6 = `a1629a51-9c51-485b-bebf-43c6180e08e7`,
-    day7_8 = `4c30852e-b1fe-49fc-96ae-01ad2a61aba9`,
-    day9 = `86522ba4-8289-4e42-9e1c-fffb2af95778`,
-    day10 = `c3b94232-9c06-4713-8a3e-54cfff85de45`
+    day1 = `aa9ba724-ff31-4fc4-b156-d059a2e7d03d`,  # previous day6
+    day2 = `4a5ee0d3-95e8-4771-b6af-08af7d68aa19`,  # previous day3
+    day3 = `3bce540b-d4d7-4d21-8609-45c011eb773a`,  # previous day2
+    day4 = `cc440a4e-b7be-469a-98ef-ae7896b94efe`,  # previous day9
+    day5 = `818f047d-9b9a-4381-b123-710bc84e0c55`,  # previous day4
+    day6 = `22564518-e45a-4a30-8d01-47309a1aa154`,  # previous day1
+    day7_8 = `45f6ab06-7b18-4840-b605-1bac50053bc4`,  # previous day7_8
+    day9 = `92e7568c-75a7-4479-9bf6-968318dacdec`,  # previous day5
+    day10 = `7b66d724-e71a-4349-b2fa-5d7d1e5394c5`  # previous day10
   ) |>
   unnest_wider(day1, names_sep = "_") |>
   unnest_wider(day2, names_sep = "_") |>
