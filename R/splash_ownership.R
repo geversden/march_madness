@@ -421,26 +421,33 @@ extract_day_picks <- function(results_dt, day_col, slot_id, year) {
       }
     }
 
-    # Per-row data.frames (2025 day7_8 style)
+    # Per-row nested structures: either a data.frame directly (2025 day7_8)
+    # or a list with $picks containing the data.frame (2024 day7_8)
     nested_picks <- rbindlist(lapply(seq_len(n_entries), function(i) {
-      nested_df <- nested_data[[i]]
-      if (is.null(nested_df) || !is.data.frame(nested_df) || nrow(nested_df) == 0) {
+      item <- nested_data[[i]]
+
+      # 2024 format: item is a list with $picks as the actual data.frame
+      if (is.list(item) && !is.data.frame(item) && "picks" %in% names(item)) {
+        item <- item$picks
+      }
+
+      if (is.null(item) || !is.data.frame(item) || nrow(item) == 0) {
         return(data.table(
           year = year, entry_id = entry_ids[i], slot_id = slot_id,
           team_alias = NA_character_, team_name = NA_character_, won = NA
         ))
       }
-      alias_col_name <- intersect(names(nested_df), c("teamAlias", "team_alias"))
-      name_col_name <- intersect(names(nested_df), c("teamName", "team_name"))
-      win_col_name <- intersect(names(nested_df), c("winning", "won"))
+      alias_col_name <- intersect(names(item), c("teamAlias", "team_alias"))
+      name_col_name <- intersect(names(item), c("teamName", "team_name"))
+      win_col_name <- intersect(names(item), c("winning", "won"))
 
       data.table(
         year       = year,
         entry_id   = entry_ids[i],
         slot_id    = slot_id,
-        team_alias = if (length(alias_col_name)) as.character(nested_df[[alias_col_name[1]]]) else NA_character_,
-        team_name  = if (length(name_col_name)) as.character(nested_df[[name_col_name[1]]]) else NA_character_,
-        won        = if (length(win_col_name)) as.logical(nested_df[[win_col_name[1]]]) else NA
+        team_alias = if (length(alias_col_name)) as.character(item[[alias_col_name[1]]]) else NA_character_,
+        team_name  = if (length(name_col_name)) as.character(item[[name_col_name[1]]]) else NA_character_,
+        won        = if (length(win_col_name)) as.logical(item[[win_col_name[1]]]) else NA
       )
     }), fill = TRUE)
 
