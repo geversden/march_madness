@@ -114,16 +114,42 @@ SPLASH_SLOTS <- list(
 
 # ==============================================================================
 # FORMAT VARIANTS
-# Each contest uses one of these slot orderings.
-# Format A: E8 combined (pick any 2 of 4)
-# Format B: E8 split by day (pick 1 per day)
+#
+# Format A: 1/day, E8 combined  (2-2-2-2-1-1) = 10 picks — most common
+# Format B: 1/day, E8 split     (2-2-2-2-1-1) = 10 picks — Spooky, MARCH MADNESS
+# Format C: 2/day R1+R2, E8 combined (4-4-2-2-1-1) = 14 picks — Benkert
+#
+# Hodes (3-3-1-1-1-1) is a separate system and not handled here.
 # ==============================================================================
 
-SLOT_ORDER_A <- c("R1_d1", "R1_d2", "R2_d1", "R2_d2",
-                  "S16_d1", "S16_d2", "E8", "FF", "CHAMP")
+FORMAT_DEFS <- list(
+  A = list(
+    label = "1/day, E8 combined (2-2-2-2-1-1)",
+    slot_order = c("R1_d1", "R1_d2", "R2_d1", "R2_d2",
+                   "S16_d1", "S16_d2", "E8", "FF", "CHAMP"),
+    n_picks_override = list(),
+    total_picks = 10
+  ),
+  B = list(
+    label = "1/day, E8 split (2-2-2-2-1-1)",
+    slot_order = c("R1_d1", "R1_d2", "R2_d1", "R2_d2",
+                   "S16_d1", "S16_d2", "E8_d1", "E8_d2", "FF", "CHAMP"),
+    n_picks_override = list(),
+    total_picks = 10
+  ),
+  C = list(
+    label = "2/day R1+R2, E8 combined (4-4-2-2-1-1)",
+    slot_order = c("R1_d1", "R1_d2", "R2_d1", "R2_d2",
+                   "S16_d1", "S16_d2", "E8", "FF", "CHAMP"),
+    n_picks_override = list(R1_d1 = 2L, R1_d2 = 2L, R2_d1 = 2L, R2_d2 = 2L),
+    total_picks = 14
+  )
+)
 
-SLOT_ORDER_B <- c("R1_d1", "R1_d2", "R2_d1", "R2_d2",
-                  "S16_d1", "S16_d2", "E8_d1", "E8_d2", "FF", "CHAMP")
+# Convenience vectors (backward compat)
+SLOT_ORDER_A <- FORMAT_DEFS$A$slot_order
+SLOT_ORDER_B <- FORMAT_DEFS$B$slot_order
+SLOT_ORDER_C <- FORMAT_DEFS$C$slot_order
 
 # All possible slot IDs (superset) — used for state columns
 ALL_SLOT_IDS <- c("R1_d1", "R1_d2", "R2_d1", "R2_d2",
@@ -132,14 +158,33 @@ ALL_SLOT_IDS <- c("R1_d1", "R1_d2", "R2_d1", "R2_d2",
 # Default: Format A (can be overridden per contest)
 SLOT_ORDER <- SLOT_ORDER_A
 
+#' Get the format definition for a given format code
+#' @param format Character "A", "B", or "C"
+#' @return List with slot_order, n_picks_override, total_picks, label
+get_format_def <- function(format = "A") {
+  fmt <- FORMAT_DEFS[[toupper(format)]]
+  if (is.null(fmt)) {
+    stop("Unknown format: ", format, ". Use 'A', 'B', or 'C'.")
+  }
+  fmt
+}
+
 #' Get the slot order for a given format
-#' @param format Character "A" or "B"
+#' @param format Character "A", "B", or "C"
 get_slot_order <- function(format = "A") {
-  switch(toupper(format),
-    "A" = SLOT_ORDER_A,
-    "B" = SLOT_ORDER_B,
-    stop("Unknown format: ", format, ". Use 'A' (E8 combined) or 'B' (E8 split).")
-  )
+  get_format_def(format)$slot_order
+}
+
+#' Get n_picks for a slot under a given format
+#' Checks format-specific overrides first, then falls back to the slot default.
+#' @param slot_id Character slot ID
+#' @param format Character "A", "B", or "C"
+#' @return Integer number of picks for this slot in this format
+get_n_picks <- function(slot_id, format = "A") {
+  fmt <- get_format_def(format)
+  override <- fmt$n_picks_override[[slot_id]]
+  if (!is.null(override)) return(override)
+  get_slot(slot_id)$n_picks
 }
 
 # ==============================================================================
@@ -322,8 +367,9 @@ format_slot_cols <- function(format = "A") {
 }
 
 cat("Splash config loaded\n")
-cat("  Format A: 9 slots, 10 picks (E8 combined: any 2 of 4)\n")
-cat("  Format B: 10 slots, 10 picks (E8 split: 1 per day)\n")
+cat("  Format A: 9 slots, 10 picks (1/day, E8 combined)\n")
+cat("  Format B: 10 slots, 10 picks (1/day, E8 split)\n")
+cat("  Format C: 9 slots, 14 picks (2/day R1+R2, E8 combined)\n")
 cat(sprintf("  R64 Thu: %d games | R64 Fri: %d games\n",
             length(R64_THU_GAMES), length(R64_FRI_GAMES)))
 cat(sprintf("  R32 Sat: %d games | R32 Sun: %d games\n",
