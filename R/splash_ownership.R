@@ -371,8 +371,9 @@ extract_day_picks <- function(results_dt, day_col, slot_id, year) {
     #   (b) List column of per-row named lists: list(list(gameId="x", teamAlias="y",...), ...)
     picks_data <- results_dt[[picks_col]]
 
-    if (is.list(picks_data) && !is.data.frame(picks_data)) {
-      # Check if it's a named list of vectors (pattern a)
+    if (is.list(picks_data)) {
+      # Check if it's a named list/data.frame of vectors (pattern a)
+      # data.table stores day1_picks as a data.frame (9 cols × n_entries rows)
       if (!is.null(names(picks_data)) && "teamAlias" %in% names(picks_data)) {
         alias_vec <- picks_data[["teamAlias"]]
         name_vec <- picks_data[["teamName"]]
