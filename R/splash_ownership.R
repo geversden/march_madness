@@ -317,24 +317,148 @@ print_ownership <- function(slot_id, ownership, teams_dt, sim_matrix) {
 
 # Day-to-slot mapping for Format A
 # day1=R1_d1, day2=R1_d2, day3=R2_d1, day4=R2_d2,
-# day5=S16_d1, day6=S16_d2, day7_8=E8 (2 picks, nested df), day9=FF, day10=CHAMP
-FORMAT_A_DAY_MAP <- list(
-  list(col = "day1", slot = "R1_d1",  nested = FALSE),
-  list(col = "day2", slot = "R1_d2",  nested = FALSE),
-  list(col = "day3", slot = "R2_d1",  nested = FALSE),
-  list(col = "day4", slot = "R2_d2",  nested = FALSE),
-  list(col = "day5", slot = "S16_d1", nested = FALSE),
-  list(col = "day6", slot = "S16_d2", nested = FALSE),
-  list(col = "day7_8", slot = "E8",   nested = TRUE),
-  list(col = "day9", slot = "FF",     nested = FALSE),
-  list(col = "day10", slot = "CHAMP", nested = FALSE)
-)
+# day5=S16_d1, day6=S16_d2, day7_8=E8 (2 picks), day9=FF, day10=CHAMP
+FORMAT_A_DAY_MAP <- c("day1" = "R1_d1", "day2" = "R1_d2", "day3" = "R2_d1",
+                       "day4" = "R2_d2", "day5" = "S16_d1", "day6" = "S16_d2",
+                       "day7_8" = "E8", "day9" = "FF", "day10" = "CHAMP")
+
+#' Extract picks from a single day column (handles both API formats)
+#'
+#' Splash API data comes in two formats:
+#'   2025+: flat columns (day1_teamAlias, day1_teamName, day1_winning)
+#'   2024:  list-of-vectors column (day1_picks$teamAlias, day1_picks$teamName, etc.)
+#'   E8:    nested per-row data.frames (day7_8) OR list-of-vectors (day7_8$teamAlias)
+#'
+#' @param results_dt data.table of raw results
+#' @param day_col Character day column prefix (e.g., "day1", "day7_8")
+#' @param slot_id Character slot ID to assign
+#' @param year Integer year
+#' @return data.table with columns: year, entry_id, slot_id, team_alias, team_name, won
+extract_day_picks <- function(results_dt, day_col, slot_id, year) {
+  n_entries <- nrow(results_dt)
+  entry_ids <- if ("entryId" %in% names(results_dt)) results_dt$entryId else seq_len(n_entries)
+
+  # --- Format detection ---
+  # Check for flat columns (2025 style): day1_teamAlias, day1_teamName, etc.
+  flat_alias <- paste0(day_col, "_teamAlias")
+  flat_name <- paste0(day_col, "_teamName")
+  flat_win <- paste0(day_col, "_winning")
+
+  # Check for list-of-vectors column (2024 style): day1_picks
+  picks_col <- paste0(day_col, "_picks")
+
+  # Check for the column itself being a nested structure (day7_8)
+  has_flat <- flat_alias %in% names(results_dt) || flat_name %in% names(results_dt)
+  has_picks_col <- picks_col %in% names(results_dt)
+  has_direct <- day_col %in% names(results_dt)
+
+  if (has_flat) {
+    # --- 2025 flat format: day{X}_teamAlias, day{X}_teamName, day{X}_winning ---
+    return(data.table(
+      year       = year,
+      entry_id   = entry_ids,
+      slot_id    = slot_id,
+      team_alias = if (flat_alias %in% names(results_dt)) as.character(results_dt[[flat_alias]]) else NA_character_,
+      team_name  = if (flat_name %in% names(results_dt)) as.character(results_dt[[flat_name]]) else NA_character_,
+      won        = if (flat_win %in% names(results_dt)) as.logical(results_dt[[flat_win]]) else NA
+    ))
+  }
+
+  if (has_picks_col) {
+    # --- 2024 list-of-vectors format: day{X}_picks is a named list ---
+    # day1_picks$teamAlias is a character vector of length n_entries
+    picks_data <- results_dt[[picks_col]]
+
+    if (is.list(picks_data) && !is.data.frame(picks_data) && !is.null(names(picks_data))) {
+      # Named list of vectors (each length n_entries)
+      alias_vec <- picks_data[["teamAlias"]]
+      name_vec <- picks_data[["teamName"]]
+      win_vec <- picks_data[["winning"]]
+
+      return(data.table(
+        year       = year,
+        entry_id   = entry_ids,
+        slot_id    = slot_id,
+        team_alias = if (!is.null(alias_vec)) as.character(alias_vec) else NA_character_,
+        team_name  = if (!is.null(name_vec)) as.character(name_vec) else NA_character_,
+        won        = if (!is.null(win_vec)) as.logical(win_vec) else NA
+      ))
+    }
+  }
+
+  if (has_direct) {
+    # --- Nested column (day7_8): could be per-row data.frames OR list-of-vectors ---
+    nested_data <- results_dt[[day_col]]
+
+    if (is.list(nested_data) && !is.null(names(nested_data)) &&
+        "teamAlias" %in% names(nested_data)) {
+      # List-of-vectors format (like 2024 day_picks)
+      alias_vec <- nested_data[["teamAlias"]]
+      name_vec <- nested_data[["teamName"]]
+      win_vec <- nested_data[["winning"]]
+
+      # These vectors may be longer than n_entries (E8 has 2 picks per entry)
+      n_picks_per <- length(alias_vec) / n_entries
+      if (n_picks_per == round(n_picks_per) && n_picks_per > 1) {
+        # Multiple picks per entry — interleaved
+        return(data.table(
+          year       = year,
+          entry_id   = rep(entry_ids, each = as.integer(n_picks_per)),
+          slot_id    = slot_id,
+          team_alias = as.character(alias_vec),
+          team_name  = as.character(name_vec),
+          won        = as.logical(win_vec)
+        ))
+      } else {
+        return(data.table(
+          year       = year,
+          entry_id   = entry_ids,
+          slot_id    = slot_id,
+          team_alias = as.character(alias_vec),
+          team_name  = as.character(name_vec),
+          won        = as.logical(win_vec)
+        ))
+      }
+    }
+
+    # Per-row data.frames (2025 day7_8 style)
+    nested_picks <- rbindlist(lapply(seq_len(n_entries), function(i) {
+      nested_df <- nested_data[[i]]
+      if (is.null(nested_df) || !is.data.frame(nested_df) || nrow(nested_df) == 0) {
+        return(data.table(
+          year = year, entry_id = entry_ids[i], slot_id = slot_id,
+          team_alias = NA_character_, team_name = NA_character_, won = NA
+        ))
+      }
+      alias_col_name <- intersect(names(nested_df), c("teamAlias", "team_alias"))
+      name_col_name <- intersect(names(nested_df), c("teamName", "team_name"))
+      win_col_name <- intersect(names(nested_df), c("winning", "won"))
+
+      data.table(
+        year       = year,
+        entry_id   = entry_ids[i],
+        slot_id    = slot_id,
+        team_alias = if (length(alias_col_name)) as.character(nested_df[[alias_col_name[1]]]) else NA_character_,
+        team_name  = if (length(name_col_name)) as.character(nested_df[[name_col_name[1]]]) else NA_character_,
+        won        = if (length(win_col_name)) as.logical(nested_df[[win_col_name[1]]]) else NA
+      )
+    }), fill = TRUE)
+
+    return(nested_picks)
+  }
+
+  # Column not found at all — return empty
+  warning("No data found for ", day_col, " in ", year, " results")
+  data.table(year = integer(0), entry_id = character(0), slot_id = character(0),
+             team_alias = character(0), team_name = character(0), won = logical(0))
+}
 
 #' Parse raw Splash results RDS into a long-form picks table
 #'
-#' Takes the raw data.table from Splash API (one row per entry, with day1-day10
-#' columns including nested data.frames for E8) and returns a clean long-format
-#' table of all picks.
+#' Handles both API formats:
+#'   2025+: flat columns (day1_teamAlias, day1_teamName, day1_winning)
+#'   2024:  list-of-vectors columns (day1_picks$teamAlias, etc.)
+#'   E8:    nested per-row data.frames (day7_8) in 2025, list-of-vectors in 2024
 #'
 #' @param results_dt data.table loaded from results_YYYY.rds
 #' @param year Integer year (2024, 2025, etc.)
@@ -345,75 +469,10 @@ parse_splash_results <- function(results_dt, year, format = "A") {
 
   day_map <- FORMAT_A_DAY_MAP
   n_entries <- nrow(results_dt)
-  picks_list <- vector("list", length(day_map))
 
-  for (dm_idx in seq_along(day_map)) {
-    dm <- day_map[[dm_idx]]
-    slot_id <- dm$slot
-
-    if (!dm$nested) {
-      # Simple columns: day{X}_teamAlias, day{X}_teamName, day{X}_winning
-      alias_col <- paste0(dm$col, "_teamAlias")
-      name_col <- paste0(dm$col, "_teamName")
-      win_col <- paste0(dm$col, "_winning")
-
-      # Check which columns actually exist
-      has_alias <- alias_col %in% names(results_dt)
-      has_name <- name_col %in% names(results_dt)
-      has_win <- win_col %in% names(results_dt)
-
-      picks_list[[dm_idx]] <- data.table(
-        year     = year,
-        entry_id = if ("entryId" %in% names(results_dt)) results_dt$entryId else seq_len(n_entries),
-        slot_id  = slot_id,
-        team_alias = if (has_alias) as.character(results_dt[[alias_col]]) else NA_character_,
-        team_name  = if (has_name) as.character(results_dt[[name_col]]) else NA_character_,
-        won        = if (has_win) as.logical(results_dt[[win_col]]) else NA
-      )
-    } else {
-      # Nested column (day7_8): each cell is a data.frame with 2 rows
-      # Extract team_alias and team_name from the nested data.frames
-      nested_col <- dm$col
-      if (!(nested_col %in% names(results_dt))) {
-        warning("Nested column '", nested_col, "' not found, skipping")
-        picks_list[[dm_idx]] <- data.table(
-          year = integer(0), entry_id = character(0), slot_id = character(0),
-          team_alias = character(0), team_name = character(0), won = logical(0)
-        )
-        next
-      }
-
-      # Each row's nested df has columns like teamAlias, teamName, winning
-      nested_picks <- rbindlist(lapply(seq_len(n_entries), function(i) {
-        nested_df <- results_dt[[nested_col]][[i]]
-        if (is.null(nested_df) || !is.data.frame(nested_df) || nrow(nested_df) == 0) {
-          return(data.table(
-            year = year,
-            entry_id = if ("entryId" %in% names(results_dt)) results_dt$entryId[i] else i,
-            slot_id = slot_id,
-            team_alias = NA_character_,
-            team_name = NA_character_,
-            won = NA
-          ))
-        }
-        # Try to find the right column names (may vary)
-        alias_candidates <- intersect(names(nested_df), c("teamAlias", "team_alias"))
-        name_candidates <- intersect(names(nested_df), c("teamName", "team_name"))
-        win_candidates <- intersect(names(nested_df), c("winning", "won"))
-
-        data.table(
-          year = year,
-          entry_id = if ("entryId" %in% names(results_dt)) results_dt$entryId[i] else i,
-          slot_id = slot_id,
-          team_alias = if (length(alias_candidates)) as.character(nested_df[[alias_candidates[1]]]) else NA_character_,
-          team_name = if (length(name_candidates)) as.character(nested_df[[name_candidates[1]]]) else NA_character_,
-          won = if (length(win_candidates)) as.logical(nested_df[[win_candidates[1]]]) else NA
-        )
-      }), fill = TRUE)
-
-      picks_list[[dm_idx]] <- nested_picks
-    }
-  }
+  picks_list <- lapply(seq_along(day_map), function(i) {
+    extract_day_picks(results_dt, names(day_map)[i], day_map[i], year)
+  })
 
   all_picks <- rbindlist(picks_list, fill = TRUE)
 
