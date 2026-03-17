@@ -305,8 +305,10 @@ simulate_field_entry <- function(sim_idx, ownership_by_slot, teams_dt, tw,
 
 #' Compute EV for a candidate pick in a specific contest
 #'
-#' Runs full contest simulation: for each sim, determine our death round
-#' and the field's death rounds, then compute payout.
+#' Uses analytical field death-round computation: for each sim, we know which
+#' teams won each round (from the sim matrix) and the ownership distribution.
+#' P(field entry survives slot s) = sum(ownership on winning teams), computed
+#' via matrix multiply. No Monte Carlo sampling of field entries needed.
 #'
 #' @param candidate_id Integer team_id for today's pick
 #' @param group A row from group_entries() output
@@ -315,37 +317,27 @@ simulate_field_entry <- function(sim_idx, ownership_by_slot, teams_dt, tw,
 #' @param tw Precomputed team wins
 #' @param teams_dt Teams data frame
 #' @param ownership_by_slot List of ownership vectors per slot
-#' @param n_field_samples Number of field entries to simulate per sim
-#'   (use contest_size or a sample for efficiency)
-#' @param sim_sample_size Number of sims to evaluate (subsample for speed)
-#' @return List with: ev (expected value per entry), survival_prob, mean_death_round
+#' @param sim_sample_size Number of sims to evaluate (subsample for memory)
+#' @return List with: ev, p_survive_today, p_win_contest, mean_death_rd
 compute_candidate_ev <- function(candidate_id, group, current_slot_id,
                                   sim, tw, teams_dt, ownership_by_slot,
-                                  n_field_samples = NULL,
-                                  sim_sample_size = 50000) {
+                                  sim_sample_size = 100000) {
   n_sims <- sim$n_sims
+  n_teams <- nrow(teams_dt)
   contest_size <- group$contest_size
   prize_pool <- group$prize_pool
   our_n <- group$n_entries
   used_teams <- group$used_teams[[1]]
-
-  if (is.null(n_field_samples)) {
-    # Simulate min(contest_size, 200) field entries per sim for speed
-    n_field_samples <- min(contest_size - our_n, 200)
-  }
+  full_field <- contest_size - our_n
 
   # Determine slot order for this group's format
   group_format <- if ("format" %in% names(group)) group$format else "A"
   slot_order <- get_slot_order(group_format)
   current_idx <- match(current_slot_id, slot_order)
+  remaining_slots <- slot_order[current_idx:length(slot_order)]
+  n_remaining <- length(remaining_slots)
 
-  # Our entry's forward simulation
-  our_result <- forward_simulate_entry(candidate_id, used_teams, current_slot_id,
-                                        sim, tw, teams_dt,
-                                        slot_order = slot_order, format = group_format)
-  our_death <- our_result$death_round  # 0 = survived, else round number
-
-  # Subsample sims for field simulation (expensive)
+  # Subsample sims for memory efficiency (matrices are n_sims × n_slots)
   if (n_sims > sim_sample_size) {
     sample_idx <- sample.int(n_sims, sim_sample_size)
   } else {
@@ -353,63 +345,125 @@ compute_candidate_ev <- function(candidate_id, group, current_slot_id,
     sim_sample_size <- n_sims
   }
 
-  # For each sampled sim, simulate field entries and compute payout
-  payouts <- numeric(sim_sample_size)
-  pg <- make_progress(sim_sample_size, "Sims", update_every = 3)
+  # --- Our entry's forward simulation ---
+  our_result <- forward_simulate_entry(candidate_id, used_teams, current_slot_id,
+                                        sim, tw, teams_dt,
+                                        slot_order = slot_order, format = group_format)
+  our_death <- our_result$death_round[sample_idx]  # subsample
 
-  for (si in seq_along(sample_idx)) {
-    sim_i <- sample_idx[si]
-    my_death <- our_death[sim_i]
+  # --- Analytical field death-round distribution ---
+  # For each remaining slot, compute P(random field entry survives this slot | sim)
+  # as the ownership-weighted fraction of teams that won.
+  # This is exact (no sampling noise) and computed via matrix multiply.
 
-    # Simulate field entries
-    field_deaths <- integer(n_field_samples)
-    for (f in seq_len(n_field_samples)) {
-      # Each field entry has a random set of prior used teams
-      # Simplified: assume field entries start fresh from current slot
-      # (their prior picks are already accounted for in ownership availability)
-      field_deaths[f] <- simulate_field_entry(
-        sim_i, ownership_by_slot, teams_dt, tw,
-        field_used = integer(0), start_slot_idx = current_idx,
-        slot_order = slot_order, format = group_format
-      )
-    }
+  # slot_survive[sim, slot_pos] = P(field entry survives this slot)
+  slot_survive <- matrix(1, nrow = sim_sample_size, ncol = n_remaining)
+  slot_round_nums <- integer(n_remaining)
 
-    # Scale field deaths to full contest size
-    scale_factor <- (contest_size - our_n) / n_field_samples
+  for (si in seq_along(remaining_slots)) {
+    sid <- remaining_slots[si]
+    slot <- get_slot(sid)
+    slot_round_nums[si] <- slot$round_num
+    n_picks <- get_n_picks(sid, group_format)
 
-    # Determine winner: whoever survives longest
-    if (my_death == 0) {
-      # We survived everything
-      field_survivors <- sum(field_deaths == 0)
-      scaled_field_survivors <- field_survivors * scale_factor
-      # Split prize with other survivors
-      payouts[si] <- prize_pool / (scaled_field_survivors + 1)
+    own <- ownership_by_slot[[sid]]
+    if (is.null(own) || length(own) == 0) next  # no pick needed, auto-survive
+
+    # Map ownership (named by team_name) to team_id-indexed vector
+    own_vec <- numeric(n_teams)
+    team_ids <- teams_dt$team_id[match(names(own), teams_dt$name)]
+    valid <- !is.na(team_ids)
+    own_vec[team_ids[valid]] <- own[names(own)[valid]]
+
+    # P(a random pick from ownership survives) = ownership . winners
+    # = win_mat[sampled_sims, ] %*% own_vec
+    win_mat_sub <- tw$team_round_wins[[slot$round_num]][sample_idx, , drop = FALSE]
+    p_single <- as.numeric(win_mat_sub %*% own_vec)
+
+    # Multi-pick slots (e.g., Format C R1): all picks must survive.
+    # Approximate P(all n picks survive) ≈ p^n (independence assumption,
+    # ignores without-replacement constraint — fine when ownership is spread
+    # across many teams).
+    if (n_picks > 1) {
+      slot_survive[, si] <- p_single ^ n_picks
     } else {
-      # We died in round my_death
-      # Did anyone survive longer? (death==0 means survived everything, or died later)
-      field_survived_longer <- sum(field_deaths == 0 | (field_deaths > my_death))
+      slot_survive[, si] <- p_single
+    }
+  }
 
-      if (field_survived_longer > 0) {
-        # Someone outlasted us — we lose
-        payouts[si] <- 0
-      } else {
-        # No one survived longer. Among those who died in round my_death:
-        field_same_round <- sum(field_deaths == my_death)
-        scaled_same <- field_same_round * scale_factor
-        # Split prize among entries that died in the same (latest) round
-        payouts[si] <- prize_pool / (scaled_same + 1)
+  # Cumulative survival: P(field survives slots 1..s)
+  cum_survive <- slot_survive
+  if (n_remaining >= 2) {
+    for (si in 2:n_remaining) {
+      cum_survive[, si] <- cum_survive[, si - 1] * slot_survive[, si]
+    }
+  }
+
+  # Aggregate per-slot death probabilities into per-round death probabilities.
+  # Multiple slots can share a round_num (e.g., R1_d1 and R1_d2 both round 1).
+  max_round <- 6L
+  p_field_dies_round <- matrix(0, nrow = sim_sample_size, ncol = max_round)
+
+  for (si in seq_along(remaining_slots)) {
+    rd <- slot_round_nums[si]
+    if (si == 1) {
+      p_die <- 1 - slot_survive[, si]
+    } else {
+      p_die <- cum_survive[, si - 1] * (1 - slot_survive[, si])
+    }
+    p_field_dies_round[, rd] <- p_field_dies_round[, rd] + p_die
+  }
+
+  # P(field entry survives everything | sim)
+  p_field_all <- cum_survive[, n_remaining]
+
+  # --- Compute expected payout per sim (vectorized by death round) ---
+  payouts <- numeric(sim_sample_size)
+
+  # Case 1: We survived everything (our_death == 0)
+  survived_mask <- our_death == 0L
+  if (any(survived_mask)) {
+    expected_co <- p_field_all[survived_mask] * full_field
+    payouts[survived_mask] <- prize_pool / (1 + expected_co)
+  }
+
+  # Case 2: We died in round d
+  for (d in 1:max_round) {
+    died_mask <- our_death == d
+    if (!any(died_mask)) next
+
+    # P(a single field entry outlasts us) = P(survive all) + P(die in round > d)
+    p_outlast <- p_field_all[died_mask]
+    if (d < max_round) {
+      for (rd in (d + 1):max_round) {
+        p_outlast <- p_outlast + p_field_dies_round[died_mask, rd]
       }
     }
 
-    pg$tick()
+    # P(nobody in the full field outlasts us) = (1 - p_outlast)^N
+    p_nobody <- (1 - p_outlast) ^ full_field
+
+    # E[field entries that die in same round as us]
+    p_same <- p_field_dies_round[died_mask, d]
+    expected_same <- p_same * full_field
+
+    # EV = P(nobody outlasts) × prize / (1 + expected same-round deaths)
+    payouts[died_mask] <- p_nobody * prize_pool / (1 + expected_same)
   }
-  pg$done()
+
+  # --- Metrics ---
+  today_round <- get_slot(current_slot_id)$round_num
+  p_survive_today <- mean(tw$team_round_wins[[today_round]][, candidate_id])
+  p_win_contest <- mean(payouts > 0)
+  died_sims <- our_death[our_death > 0]
+  avg_death_rd <- if (length(died_sims) > 0) mean(died_sims) else NA_real_
 
   list(
-    ev             = mean(payouts),
-    survival_prob  = our_result$survival_prob,
-    mean_death_rd  = mean(our_death[our_death > 0]),
-    pct_survive    = mean(our_death == 0)
+    ev              = mean(payouts),
+    p_survive_today = p_survive_today,
+    p_win_contest   = p_win_contest,
+    mean_death_rd   = avg_death_rd,
+    p_survive_all   = our_result$survival_prob
   )
 }
 
@@ -431,7 +485,7 @@ compute_candidate_ev <- function(candidate_id, group, current_slot_id,
 #'   survival_prob, ownership, leverage
 optimize_today <- function(state, candidates, current_slot_id, sim, tw,
                             teams_dt, ownership_by_slot,
-                            sim_sample_size = 50000) {
+                            sim_sample_size = 100000) {
   groups <- group_entries(state)
   if (nrow(groups) == 0) {
     cat("No alive entries to optimize.\n")
@@ -495,19 +549,21 @@ optimize_today <- function(state, candidates, current_slot_id, sim, tw,
         cid, g, current_slot_id, sim, tw, teams_dt,
         ownership_by_slot, sim_sample_size = sim_sample_size
       )
-      cat(sprintf("    => EV=$%.2f, Surv=%.1f%%, WinContest=%.3f%%\n",
-                  ev_result$ev, 100 * ev_result$survival_prob,
-                  100 * ev_result$pct_survive))
+      cat(sprintf("    => EV=$%.2f, P(win today)=%.1f%%, P(win contest)=%.3f%%, Avg death rd=%.1f\n",
+                  ev_result$ev, 100 * ev_result$p_survive_today,
+                  100 * ev_result$p_win_contest,
+                  ifelse(is.na(ev_result$mean_death_rd), 0, ev_result$mean_death_rd)))
 
       all_scores[[length(all_scores) + 1]] <- data.table(
-        group_id      = g$group_id,
-        contest_id    = g$contest_id,
-        n_entries     = g$n_entries,
-        team_name     = cname,
-        team_id       = cid,
-        ev            = ev_result$ev,
-        survival_prob = ev_result$survival_prob,
-        pct_survive   = ev_result$pct_survive
+        group_id        = g$group_id,
+        contest_id      = g$contest_id,
+        n_entries       = g$n_entries,
+        team_name       = cname,
+        team_id         = cid,
+        ev              = ev_result$ev,
+        p_survive_today = ev_result$p_survive_today,
+        p_win_contest   = ev_result$p_win_contest,
+        mean_death_rd   = ev_result$mean_death_rd
       )
     }
   }
@@ -551,13 +607,14 @@ optimize_today <- function(state, candidates, current_slot_id, sim, tw,
     if (n_ent <= 3 || nrow(g_scores) <= 1) {
       # Small group or only one option: all on best
       allocation_list[[length(allocation_list) + 1]] <- data.table(
-        contest_id = g$contest_id,
-        group_id   = g$group_id,
-        team_name  = best$team_name,
-        team_id    = best$team_id,
-        n_assigned = n_ent,
-        ev         = best$ev,
-        survival_prob = best$survival_prob
+        contest_id      = g$contest_id,
+        group_id        = g$group_id,
+        team_name       = best$team_name,
+        team_id         = best$team_id,
+        n_assigned      = n_ent,
+        ev              = best$ev,
+        p_survive_today = best$p_survive_today,
+        p_win_contest   = best$p_win_contest
       )
     } else {
       # Spread across top candidates proportional to EV
@@ -586,13 +643,14 @@ optimize_today <- function(state, candidates, current_slot_id, sim, tw,
       for (k in seq_len(top_n)) {
         if (raw_alloc[k] > 0) {
           allocation_list[[length(allocation_list) + 1]] <- data.table(
-            contest_id = g$contest_id,
-            group_id   = g$group_id,
-            team_name  = top$team_name[k],
-            team_id    = top$team_id[k],
-            n_assigned = raw_alloc[k],
-            ev         = top$ev[k],
-            survival_prob = top$survival_prob[k]
+            contest_id      = g$contest_id,
+            group_id        = g$group_id,
+            team_name       = top$team_name[k],
+            team_id         = top$team_id[k],
+            n_assigned      = raw_alloc[k],
+            ev              = top$ev[k],
+            p_survive_today = top$p_survive_today[k],
+            p_win_contest   = top$p_win_contest[k]
           )
         }
       }
@@ -604,7 +662,7 @@ optimize_today <- function(state, candidates, current_slot_id, sim, tw,
   # Add ownership and leverage
   if (!is.null(ownership)) {
     allocation[, ownership := ownership[team_name], by = team_name]
-    allocation[, leverage := survival_prob / pmax(ownership, 0.001)]
+    allocation[, leverage := p_survive_today / pmax(ownership, 0.001)]
   }
 
   allocation
@@ -627,10 +685,11 @@ print_allocation <- function(allocation, teams_dt) {
 
   # Summary by team
   by_team <- allocation[, .(
-    total_entries = sum(n_assigned),
-    avg_ev = weighted.mean(ev, n_assigned),
-    avg_surv = weighted.mean(survival_prob, n_assigned),
-    n_contests = uniqueN(contest_id)
+    total_entries   = sum(n_assigned),
+    avg_ev          = weighted.mean(ev, n_assigned),
+    avg_win_today   = weighted.mean(p_survive_today, n_assigned),
+    avg_win_contest = weighted.mean(p_win_contest, n_assigned),
+    n_contests      = uniqueN(contest_id)
   ), by = .(team_name, team_id)]
 
   # Add seed
@@ -638,20 +697,21 @@ print_allocation <- function(allocation, teams_dt) {
   by_team[, region := teams_dt$region[match(team_id, teams_dt$team_id)]]
   setorder(by_team, -total_entries)
 
-  cat(sprintf("%-20s %4s %-8s %6s %8s %7s %8s\n",
-              "Team", "Seed", "Region", "Entries", "Avg EV", "Surv%", "Contests"))
-  cat(paste(rep("-", 65), collapse = ""), "\n")
+  cat(sprintf("%-20s %4s %-8s %6s %8s %9s %11s %8s\n",
+              "Team", "Seed", "Region", "Entries", "Avg EV", "Win Today", "Win Contest", "Contests"))
+  cat(paste(rep("-", 82), collapse = ""), "\n")
 
   for (i in seq_len(nrow(by_team))) {
     r <- by_team[i]
-    cat(sprintf("%-20s  %2d   %-8s %5d  $%6.2f  %5.1f%%  %5d\n",
+    cat(sprintf("%-20s  %2d   %-8s %5d  $%6.2f   %5.1f%%      %5.2f%%   %5d\n",
                 r$team_name, r$seed, r$region,
-                r$total_entries, r$avg_ev, 100 * r$avg_surv, r$n_contests))
+                r$total_entries, r$avg_ev, 100 * r$avg_win_today,
+                100 * r$avg_win_contest, r$n_contests))
   }
 
   total_entries <- sum(by_team$total_entries)
   total_ev <- sum(allocation$ev * allocation$n_assigned)
-  cat(paste(rep("-", 65), collapse = ""), "\n")
+  cat(paste(rep("-", 82), collapse = ""), "\n")
   cat(sprintf("TOTAL: %d entries, Portfolio EV = $%.2f\n\n", total_entries, total_ev))
 
   # Detail by contest
@@ -661,8 +721,9 @@ print_allocation <- function(allocation, teams_dt) {
     cat(sprintf("\n  Contest: %s (%d entries)\n", cid, sum(ct$n_assigned)))
     for (i in seq_len(nrow(ct))) {
       r <- ct[i]
-      cat(sprintf("    %-20s: %d entries (EV=$%.2f, Surv=%.1f%%)\n",
-                  r$team_name, r$n_assigned, r$ev, 100 * r$survival_prob))
+      cat(sprintf("    %-20s: %d entries (EV=$%.2f, Win today=%.1f%%, Win contest=%.2f%%)\n",
+                  r$team_name, r$n_assigned, r$ev,
+                  100 * r$p_survive_today, 100 * r$p_win_contest))
     }
   }
 
@@ -683,7 +744,7 @@ print_allocation <- function(allocation, teams_dt) {
 #' @param sim_sample_size Number of sims per EV calculation
 #' @return List with: allocation, state, sim, tw
 run_optimizer <- function(sim_file, state_file = NULL, current_slot_id,
-                           contests_df = NULL, sim_sample_size = 50000) {
+                           contests_df = NULL, sim_sample_size = 100000) {
   pipeline_start <- proc.time()[["elapsed"]]
 
   # Load simulation results

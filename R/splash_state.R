@@ -221,7 +221,11 @@ group_entries <- function(state) {
     contest_size = contest_size[1],
     entry_fee    = entry_fee[1],
     prize_pool   = prize_pool[1],
-    used_teams   = list(as.integer(strsplit(used_hash[1], ",")[[1]]))
+    used_teams   = list({
+      parts <- strsplit(used_hash[1], ",")[[1]]
+      parts <- parts[nzchar(parts)]
+      if (length(parts) == 0) integer(0) else as.integer(parts)
+    })
   ), by = group_by_cols]
 
   # Ensure format column exists
