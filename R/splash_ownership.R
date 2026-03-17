@@ -315,12 +315,61 @@ print_ownership <- function(slot_id, ownership, teams_dt, sim_matrix) {
 # HISTORICAL PICK DATA (FULL ENTRY-LEVEL)
 # ==============================================================================
 
-# Day-to-slot mapping for Format A
-# day1=R1_d1, day2=R1_d2, day3=R2_d1, day4=R2_d2,
-# day5=S16_d1, day6=S16_d2, day7_8=E8 (2 picks), day9=FF, day10=CHAMP
-FORMAT_A_DAY_MAP <- c("day1" = "R1_d1", "day2" = "R1_d2", "day3" = "R2_d1",
-                       "day4" = "R2_d2", "day5" = "S16_d1", "day6" = "S16_d2",
-                       "day7_8" = "E8", "day9" = "FF", "day10" = "CHAMP")
+# Fixed day-to-slot mappings for day7_8/day9/day10 (always E8/FF/CHAMP)
+# Days 1-6 vary by year — auto-detected from entry counts in detect_day_mapping()
+FORMAT_A_FIXED_SLOTS <- c("day7_8" = "E8", "day9" = "FF", "day10" = "CHAMP")
+FORMAT_A_VARIABLE_DAYS <- c("day1", "day2", "day3", "day4", "day5", "day6")
+FORMAT_A_VARIABLE_SLOTS <- c("R1_d1", "R1_d2", "R2_d1", "R2_d2", "S16_d1", "S16_d2")
+
+#' Auto-detect the day-to-slot mapping from entry counts
+#'
+#' The Splash API's day numbering is NOT chronological and varies by year.
+#' We detect the mapping by counting picks per day column: the first
+#' chronological slot has the most entries (~all alive), each subsequent
+#' slot has fewer as entries get eliminated. Sort by descending count
+#' to recover the chronological order.
+#'
+#' @param results_dt data.table of raw results
+#' @return Named character vector: day_col -> slot_id
+detect_day_mapping <- function(results_dt) {
+  n_entries <- nrow(results_dt)
+
+  # Count non-NA picks per variable day column
+  day_counts <- sapply(FORMAT_A_VARIABLE_DAYS, function(day_col) {
+    # Try flat format (2025): day{X}_teamAlias
+    alias_col <- paste0(day_col, "_teamAlias")
+    if (alias_col %in% names(results_dt)) {
+      return(sum(!is.na(results_dt[[alias_col]])))
+    }
+    # Try picks format (2024): day{X}_picks
+    picks_col <- paste0(day_col, "_picks")
+    if (picks_col %in% names(results_dt)) {
+      pd <- results_dt[[picks_col]]
+      if (is.list(pd) && "teamAlias" %in% names(pd)) {
+        return(sum(!is.na(pd[["teamAlias"]])))
+      }
+    }
+    return(0L)
+  })
+
+  # Sort by descending count = chronological order
+  sorted_days <- names(sort(day_counts, decreasing = TRUE))
+
+  # Map to slots in chronological order
+  day_map <- setNames(FORMAT_A_VARIABLE_SLOTS, sorted_days)
+
+  # Add fixed mappings
+  day_map <- c(day_map, FORMAT_A_FIXED_SLOTS)
+
+  cat(sprintf("  Auto-detected day mapping (by entry count):\n"))
+  for (d in c(sorted_days, names(FORMAT_A_FIXED_SLOTS))) {
+    slot <- day_map[d]
+    cnt <- if (d %in% names(day_counts)) day_counts[d] else "—"
+    cat(sprintf("    %7s -> %-8s (%s entries)\n", d, slot, cnt))
+  }
+
+  day_map
+}
 
 #' Extract picks from a single day column (handles both API formats)
 #'
@@ -508,7 +557,8 @@ extract_day_picks <- function(results_dt, day_col, slot_id, year) {
 parse_splash_results <- function(results_dt, year, format = "A") {
   if (format != "A") stop("Only Format A parsing is implemented so far")
 
-  day_map <- FORMAT_A_DAY_MAP
+  # Auto-detect day-to-slot mapping (API day numbering varies by year)
+  day_map <- detect_day_mapping(results_dt)
   n_entries <- nrow(results_dt)
 
   picks_list <- lapply(seq_along(day_map), function(i) {
