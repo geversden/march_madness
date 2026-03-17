@@ -88,7 +88,8 @@ precompute_team_wins <- function(sim) {
 #'   death_round: integer vector (length n_sims) — round entry dies (0 = survived all)
 #'   survival_prob: scalar probability of surviving all rounds
 forward_simulate_entry <- function(candidate_id, used_teams, current_slot_id,
-                                    sim, tw, teams_dt, slot_order = SLOT_ORDER) {
+                                    sim, tw, teams_dt,
+                                    slot_order = SLOT_ORDER, format = "A") {
   n_sims <- sim$n_sims
   n_teams <- nrow(teams_dt)
 
@@ -114,7 +115,7 @@ forward_simulate_entry <- function(candidate_id, used_teams, current_slot_id,
     sid <- slot_order[s]
     future_slot <- get_slot(sid)
     future_round <- future_slot$round_num
-    n_future_picks <- future_slot$n_picks
+    n_future_picks <- get_n_picks(sid, format)
 
     # Find best available teams for this future slot (by marginal win prob)
     future_probs <- tw$team_round_probs[, future_round]
@@ -184,14 +185,14 @@ filter_sims_for_entry <- function(state_row, current_slot_id, tw,
 #' @return Integer death round (0 = survived everything)
 simulate_field_entry <- function(sim_idx, ownership_by_slot, teams_dt, tw,
                                   field_used, start_slot_idx,
-                                  slot_order = SLOT_ORDER) {
+                                  slot_order = SLOT_ORDER, format = "A") {
   used <- field_used
 
   for (s in start_slot_idx:length(slot_order)) {
     sid <- slot_order[s]
     slot <- get_slot(sid)
     round_num <- slot$round_num
-    n_picks <- slot$n_picks
+    n_picks <- get_n_picks(sid, format)
 
     own <- ownership_by_slot[[sid]]
     if (is.null(own) || length(own) == 0) next
@@ -262,7 +263,8 @@ compute_candidate_ev <- function(candidate_id, group, current_slot_id,
 
   # Our entry's forward simulation
   our_result <- forward_simulate_entry(candidate_id, used_teams, current_slot_id,
-                                        sim, tw, teams_dt, slot_order = slot_order)
+                                        sim, tw, teams_dt,
+                                        slot_order = slot_order, format = group_format)
   our_death <- our_result$death_round  # 0 = survived, else round number
 
   # Subsample sims for field simulation (expensive)
@@ -289,7 +291,7 @@ compute_candidate_ev <- function(candidate_id, group, current_slot_id,
       field_deaths[f] <- simulate_field_entry(
         sim_i, ownership_by_slot, teams_dt, tw,
         field_used = integer(0), start_slot_idx = current_idx,
-        slot_order = slot_order
+        slot_order = slot_order, format = group_format
       )
     }
 

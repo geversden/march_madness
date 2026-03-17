@@ -57,10 +57,10 @@ init_portfolio <- function(contests_df) {
     expanded[, (col) := NA_integer_]
   }
 
-  n_a <- sum(expanded$format == "A")
-  n_b <- sum(expanded$format == "B")
-  cat(sprintf("Portfolio initialized: %d entries across %d contests (%d format A, %d format B)\n",
-              nrow(expanded), nrow(contests_df), n_a, n_b))
+  fmt_counts <- table(expanded$format)
+  fmt_str <- paste(sprintf("%d format %s", fmt_counts, names(fmt_counts)), collapse = ", ")
+  cat(sprintf("Portfolio initialized: %d entries across %d contests (%s)\n",
+              nrow(expanded), nrow(contests_df), fmt_str))
   expanded
 }
 
@@ -168,7 +168,7 @@ get_used_teams <- function(state, entry_id) {
   if (nrow(row) == 0) stop("Unknown entry_id: ", entry_id)
 
   picks <- integer(0)
-  for (slot_id in SLOT_ORDER) {
+  for (slot_id in ALL_SLOT_IDS) {
     col <- slot_col_name(slot_id)
     val <- row[[col]][[1]]  # extract scalar from data.table column
     if (!is.na(val)) picks <- c(picks, val)
@@ -314,6 +314,123 @@ import_from_splash <- function(contest_id, auth_headers, our_username = "TinkyTy
     picks_raw   = all_picks,
     contest_id  = contest_id
   )
+}
+
+# ==============================================================================
+# CSV IMPORT
+# ==============================================================================
+
+#' Load contests from Tyler's master CSV
+#'
+#' Parses the CSV exported from Google Sheets, extracts contest metadata,
+#' determines format from the Rules column, and returns a data.table ready
+#' for init_portfolio().
+#'
+#' @param file Path to CSV file
+#' @param include_hodes Logical, if FALSE (default) exclude Hodes (different system)
+#' @return data.table with columns: contest_id, contest_name, contest_size,
+#'   entry_fee, prize_pool, n_entries, format, url
+load_contests_csv <- function(file, include_hodes = FALSE) {
+  raw <- fread(file)
+  cat(sprintf("Read %d contest rows from %s\n", nrow(raw), basename(file)))
+
+  # Standardize column names
+  nms <- names(raw)
+  # Handle exact column names from Tyler's CSV
+  col_map <- c(
+    "Contest"             = "contest_name",
+    "URL"                 = "url",
+    "Fee"                 = "entry_fee",
+    "Entries"             = "contest_size",
+    "Entries Remaining"   = "entries_remaining",
+    "Prizepool"           = "prize_pool",
+    "Our Entries"         = "n_entries",
+    "Our Entries Remaining" = "our_entries_remaining",
+    "Our Cost"            = "our_cost",
+    "Our Equity"          = "our_equity",
+    "Rules"               = "rules"
+  )
+  for (old_name in names(col_map)) {
+    if (old_name %in% nms) setnames(raw, old_name, col_map[[old_name]])
+  }
+
+  # Parse currency/numeric fields (remove $, commas)
+  parse_currency <- function(x) {
+    as.numeric(gsub("[\\$,]", "", x))
+  }
+  for (col in c("entry_fee", "prize_pool", "our_cost", "our_equity")) {
+    if (col %in% names(raw)) {
+      raw[, (col) := parse_currency(get(col))]
+    }
+  }
+  # contest_size and n_entries should be integer
+  for (col in c("contest_size", "n_entries", "entries_remaining", "our_entries_remaining")) {
+    if (col %in% names(raw)) {
+      raw[, (col) := as.integer(get(col))]
+    }
+  }
+
+  # Extract contest UUID from Splash URL
+  raw[, contest_id := {
+    uuid <- regmatches(url, regexpr("[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}", url))
+    ifelse(length(uuid) == 0, NA_character_, uuid)
+  }, by = seq_len(nrow(raw))]
+  # For non-Splash URLs (Hodes), use sanitized contest_name
+  raw[is.na(contest_id), contest_id := gsub("[^A-Za-z0-9]", "_", tolower(contest_name))]
+
+  # Determine format from Rules column
+  raw[, format := classify_format(rules), by = seq_len(nrow(raw))]
+
+  # Flag Hodes
+  raw[, is_hodes := grepl("hodes", contest_name, ignore.case = TRUE) |
+                     grepl("3-3-1-1", rules, ignore.case = TRUE)]
+
+  if (!include_hodes) {
+    n_hodes <- sum(raw$is_hodes)
+    if (n_hodes > 0) {
+      cat(sprintf("  Excluding %d Hodes contest(s) (different format, use hodes_pathing.R)\n",
+                  n_hodes))
+      raw <- raw[is_hodes == FALSE]
+    }
+  }
+
+  # Summarize
+  cat(sprintf("  %d contests: %d entries total\n", nrow(raw), sum(raw$n_entries)))
+  for (fmt in sort(unique(raw$format))) {
+    fmt_rows <- raw[format == fmt]
+    cat(sprintf("    Format %s: %d contests, %d entries (%s)\n",
+                fmt, nrow(fmt_rows), sum(fmt_rows$n_entries),
+                get_format_def(fmt)$label))
+  }
+
+  # Return columns needed for init_portfolio plus extras
+  keep_cols <- intersect(
+    c("contest_id", "contest_name", "contest_size", "entry_fee",
+      "prize_pool", "n_entries", "format", "url", "entries_remaining",
+      "our_entries_remaining", "our_cost", "our_equity", "rules"),
+    names(raw)
+  )
+  raw[, ..keep_cols]
+}
+
+#' Classify contest format from the Rules string
+#'
+#' @param rules Character string describing the rules
+#' @return Character "A", "B", or "C"
+classify_format <- function(rules) {
+  rules <- tolower(rules)
+
+  # Hodes or other non-Splash formats
+  if (grepl("3-3-1-1", rules)) return("A")  # placeholder, filtered separately
+
+  # Check for (4-4-2-2-1-1) pattern — Format C
+  if (grepl("4-4-2-2", rules) || grepl("pick 2 days? 1,?2", rules)) return("C")
+
+  # Check for E8 not combined — Format B
+  if (grepl("not combined", rules) || grepl("7/8 not combined", rules)) return("B")
+
+  # Default: E8 combined — Format A
+  return("A")
 }
 
 cat("Splash state module loaded\n")
