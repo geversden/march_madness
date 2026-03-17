@@ -312,96 +312,343 @@ print_ownership <- function(slot_id, ownership, teams_dt, sim_matrix) {
 }
 
 # ==============================================================================
-# HISTORICAL OWNERSHIP DATA (CSV)
+# HISTORICAL PICK DATA (FULL ENTRY-LEVEL)
 # ==============================================================================
 
-#' Load historical Splash ownership data from CSV
-#'
-#' Expected CSV format (flexible — will adapt to what's available):
-#'   year, slot_id, team_name, seed, pick_pct
-#'
-#' Or simpler formats:
-#'   year, round, team_name, pick_pct
-#'   year, day, team_name, pick_pct
-#'
-#' @param file Path to CSV file
-#' @return data.table with standardized columns: year, slot_id, team_name, pick_pct
-load_historical_ownership <- function(file) {
-  dt <- fread(file)
+# Day-to-slot mapping for Format A
+# day1=R1_d1, day2=R1_d2, day3=R2_d1, day4=R2_d2,
+# day5=S16_d1, day6=S16_d2, day7_8=E8 (2 picks, nested df), day9=FF, day10=CHAMP
+FORMAT_A_DAY_MAP <- list(
+  list(col = "day1", slot = "R1_d1",  nested = FALSE),
+  list(col = "day2", slot = "R1_d2",  nested = FALSE),
+  list(col = "day3", slot = "R2_d1",  nested = FALSE),
+  list(col = "day4", slot = "R2_d2",  nested = FALSE),
+  list(col = "day5", slot = "S16_d1", nested = FALSE),
+  list(col = "day6", slot = "S16_d2", nested = FALSE),
+  list(col = "day7_8", slot = "E8",   nested = TRUE),
+  list(col = "day9", slot = "FF",     nested = FALSE),
+  list(col = "day10", slot = "CHAMP", nested = FALSE)
+)
 
-  # Standardize column names (case-insensitive matching)
-  nms <- tolower(names(dt))
-  names(dt) <- nms
+#' Parse raw Splash results RDS into a long-form picks table
+#'
+#' Takes the raw data.table from Splash API (one row per entry, with day1-day10
+#' columns including nested data.frames for E8) and returns a clean long-format
+#' table of all picks.
+#'
+#' @param results_dt data.table loaded from results_YYYY.rds
+#' @param year Integer year (2024, 2025, etc.)
+#' @param format Character format code (default "A")
+#' @return data.table with columns: year, entry_id, slot_id, team_alias, team_name, won
+parse_splash_results <- function(results_dt, year, format = "A") {
+  if (format != "A") stop("Only Format A parsing is implemented so far")
 
-  # Map common column name variants
-  if ("team" %in% nms && !"team_name" %in% nms) setnames(dt, "team", "team_name")
-  if ("pct" %in% nms && !"pick_pct" %in% nms) setnames(dt, "pct", "pick_pct")
-  if ("ownership" %in% nms && !"pick_pct" %in% nms) setnames(dt, "ownership", "pick_pct")
-  if ("pick_perc" %in% nms && !"pick_pct" %in% nms) setnames(dt, "pick_perc", "pick_pct")
+  day_map <- FORMAT_A_DAY_MAP
+  n_entries <- nrow(results_dt)
+  picks_list <- vector("list", length(day_map))
 
-  # If pick_pct looks like percentages (>1), convert to fractions
-  if (max(dt$pick_pct, na.rm = TRUE) > 1) {
-    dt[, pick_pct := pick_pct / 100]
+  for (dm_idx in seq_along(day_map)) {
+    dm <- day_map[[dm_idx]]
+    slot_id <- dm$slot
+
+    if (!dm$nested) {
+      # Simple columns: day{X}_teamAlias, day{X}_teamName, day{X}_winning
+      alias_col <- paste0(dm$col, "_teamAlias")
+      name_col <- paste0(dm$col, "_teamName")
+      win_col <- paste0(dm$col, "_winning")
+
+      # Check which columns actually exist
+      has_alias <- alias_col %in% names(results_dt)
+      has_name <- name_col %in% names(results_dt)
+      has_win <- win_col %in% names(results_dt)
+
+      picks_list[[dm_idx]] <- data.table(
+        year     = year,
+        entry_id = if ("entryId" %in% names(results_dt)) results_dt$entryId else seq_len(n_entries),
+        slot_id  = slot_id,
+        team_alias = if (has_alias) as.character(results_dt[[alias_col]]) else NA_character_,
+        team_name  = if (has_name) as.character(results_dt[[name_col]]) else NA_character_,
+        won        = if (has_win) as.logical(results_dt[[win_col]]) else NA
+      )
+    } else {
+      # Nested column (day7_8): each cell is a data.frame with 2 rows
+      # Extract team_alias and team_name from the nested data.frames
+      nested_col <- dm$col
+      if (!(nested_col %in% names(results_dt))) {
+        warning("Nested column '", nested_col, "' not found, skipping")
+        picks_list[[dm_idx]] <- data.table(
+          year = integer(0), entry_id = character(0), slot_id = character(0),
+          team_alias = character(0), team_name = character(0), won = logical(0)
+        )
+        next
+      }
+
+      # Each row's nested df has columns like teamAlias, teamName, winning
+      nested_picks <- rbindlist(lapply(seq_len(n_entries), function(i) {
+        nested_df <- results_dt[[nested_col]][[i]]
+        if (is.null(nested_df) || !is.data.frame(nested_df) || nrow(nested_df) == 0) {
+          return(data.table(
+            year = year,
+            entry_id = if ("entryId" %in% names(results_dt)) results_dt$entryId[i] else i,
+            slot_id = slot_id,
+            team_alias = NA_character_,
+            team_name = NA_character_,
+            won = NA
+          ))
+        }
+        # Try to find the right column names (may vary)
+        alias_candidates <- intersect(names(nested_df), c("teamAlias", "team_alias"))
+        name_candidates <- intersect(names(nested_df), c("teamName", "team_name"))
+        win_candidates <- intersect(names(nested_df), c("winning", "won"))
+
+        data.table(
+          year = year,
+          entry_id = if ("entryId" %in% names(results_dt)) results_dt$entryId[i] else i,
+          slot_id = slot_id,
+          team_alias = if (length(alias_candidates)) as.character(nested_df[[alias_candidates[1]]]) else NA_character_,
+          team_name = if (length(name_candidates)) as.character(nested_df[[name_candidates[1]]]) else NA_character_,
+          won = if (length(win_candidates)) as.logical(nested_df[[win_candidates[1]]]) else NA
+        )
+      }), fill = TRUE)
+
+      picks_list[[dm_idx]] <- nested_picks
+    }
   }
 
-  # If no slot_id but has round/day, derive slot_id
-  if (!"slot_id" %in% names(dt) && "round" %in% names(dt) && "day" %in% names(dt)) {
-    dt[, slot_id := paste0("R", round, "_d", day)]
-  } else if (!"slot_id" %in% names(dt) && "round" %in% names(dt)) {
-    # Just round number, no day split — assign as round-level
-    dt[, slot_id := paste0("R", round)]
+  all_picks <- rbindlist(picks_list, fill = TRUE)
+
+  # Drop rows where pick is NA (entry was eliminated before this slot)
+  all_picks <- all_picks[!is.na(team_alias) | !is.na(team_name)]
+
+  cat(sprintf("Parsed %d picks from %d entries (%d), %d unique slots\n",
+              nrow(all_picks), n_entries, year, uniqueN(all_picks$slot_id)))
+
+  # Summary
+  slot_summary <- all_picks[, .(n_picks = .N, n_teams = uniqueN(team_alias)),
+                             by = slot_id]
+  setorder(slot_summary, slot_id)
+  cat("  Picks per slot:\n")
+  for (i in seq_len(nrow(slot_summary))) {
+    r <- slot_summary[i]
+    cat(sprintf("    %-8s: %5d picks across %2d teams\n",
+                r$slot_id, r$n_picks, r$n_teams))
   }
 
-  required <- c("team_name", "pick_pct")
-  missing <- setdiff(required, names(dt))
-  if (length(missing) > 0) {
-    stop("Historical ownership CSV missing required columns: ",
-         paste(missing, collapse = ", "),
-         "\n  Found columns: ", paste(names(dt), collapse = ", "))
-  }
-
-  cat(sprintf("Loaded historical ownership: %d rows", nrow(dt)))
-  if ("year" %in% names(dt)) cat(sprintf(", years %d-%d", min(dt$year), max(dt$year)))
-  if ("slot_id" %in% names(dt)) cat(sprintf(", %d unique slots", uniqueN(dt$slot_id)))
-  cat("\n")
-
-  dt
+  all_picks
 }
 
-#' Calibrate ownership model parameters from historical data
+#' Load and parse multiple years of Splash results
 #'
-#' Fits the softmax beta_wp parameter (and optionally save_strength) by
-#' minimizing prediction error against actual historical ownership.
+#' @param files Named list: year -> file path (e.g., list("2024" = "results_2024.rds"))
+#' @param format Format code (default "A")
+#' @return Combined data.table of all picks
+load_splash_results <- function(files, format = "A") {
+  all_picks <- rbindlist(lapply(names(files), function(yr) {
+    cat(sprintf("\nLoading %s results...\n", yr))
+    dt <- readRDS(files[[yr]])
+    parse_splash_results(dt, year = as.integer(yr), format = format)
+  }), fill = TRUE)
+
+  cat(sprintf("\nTotal: %d picks across %d years\n",
+              nrow(all_picks), uniqueN(all_picks$year)))
+  all_picks
+}
+
+# ==============================================================================
+# EMPIRICAL OWNERSHIP FROM PICK HISTORIES
+# ==============================================================================
+
+#' Compute empirical ownership per slot from parsed pick data
 #'
-#' @param hist_own data.table from load_historical_ownership()
-#' @param teams_dt Teams data frame (for seed lookup)
+#' @param picks_dt data.table from parse_splash_results()
+#' @param slot_id Optional: compute for a single slot. If NULL, compute all.
+#' @return data.table: year, slot_id, team_alias, team_name, n_picks, ownership_pct
+compute_empirical_ownership <- function(picks_dt, slot_id = NULL) {
+  dt <- if (!is.null(slot_id)) picks_dt[slot_id == slot_id] else copy(picks_dt)
+
+  # Count picks per team per slot per year
+  # Use team_alias as primary key (shorter, more stable)
+  team_col <- if (all(!is.na(dt$team_alias))) "team_alias" else "team_name"
+
+  own <- dt[, .(
+    n_picks = .N,
+    team_name = team_name[1]  # keep for display
+  ), by = c("year", "slot_id", team_col)]
+
+  # Compute total entries per slot per year (for non-E8: n_picks = n_entries)
+  slot_totals <- dt[, .(total_picks = .N), by = c("year", "slot_id")]
+
+  # For E8 (2 picks per entry), total entries = total_picks / 2
+  # Ownership should still sum to n_picks (2 for E8, 1 for others)
+  own <- merge(own, slot_totals, by = c("year", "slot_id"))
+  own[, ownership_pct := n_picks / total_picks]
+
+  setorder(own, year, slot_id, -ownership_pct)
+
+  cat(sprintf("Empirical ownership: %d team-slot-year combinations\n", nrow(own)))
+  own
+}
+
+#' Print a comparison of empirical vs predicted ownership for a slot
+print_ownership_comparison <- function(empirical_own, predicted_own, slot_id, year = NULL) {
+  emp <- empirical_own[slot_id == slot_id]
+  if (!is.null(year)) emp <- emp[year == year]
+
+  # Average across years if multiple
+  team_col <- if ("team_alias" %in% names(emp)) "team_alias" else "team_name"
+  emp_avg <- emp[, .(emp_pct = mean(ownership_pct)), by = team_col]
+
+  # Match predicted
+  pred_names <- names(predicted_own)
+
+  cat(sprintf("\n=== OWNERSHIP COMPARISON: %s ===\n", slot_id))
+  cat(sprintf("%-20s %8s %8s %8s\n", "Team", "Emp%", "Pred%", "Delta"))
+  cat(paste(rep("-", 50), collapse = ""), "\n")
+
+  for (i in seq_len(nrow(emp_avg))) {
+    tm <- emp_avg[[team_col]][i]
+    ep <- emp_avg$emp_pct[i] * 100
+
+    # Try to match predicted by alias or name
+    pp <- 0
+    if (tm %in% pred_names) {
+      pp <- predicted_own[tm] * 100
+    }
+
+    cat(sprintf("%-20s %7.1f%% %7.1f%% %+7.1f%%\n", tm, ep, pp, pp - ep))
+  }
+  cat("\n")
+}
+
+# ==============================================================================
+# BEHAVIORAL ANALYSIS FROM PICK HISTORIES
+# ==============================================================================
+
+#' Analyze field behavior from full pick histories
+#'
+#' Computes key behavioral metrics that inform the ownership model:
+#' 1. Pick-vs-win-prob curve: how strongly does the field chase chalk?
+#' 2. Save effect: do people avoid high-FV teams in early rounds?
+#' 3. Anti-self behavior: how often do entries pick against their own future bracket?
+#'
+#' @param picks_dt data.table from parse_splash_results()
+#' @param teams_dt Teams data frame (with name/seed for matching)
+#' @param sim Sim list (for computing win probs + future values per year)
+#' @return List with behavioral metrics and fitted params
+analyze_field_behavior <- function(picks_dt, teams_dt, sim = NULL) {
+  cat("Analyzing field behavior from pick histories...\n")
+  results <- list()
+
+  # --- 1. Pick concentration by seed ---
+  # How much do people favor favorites?
+  if ("team_alias" %in% names(picks_dt)) {
+    # Match picks to teams_dt by alias
+    pick_seeds <- merge(
+      picks_dt, teams_dt[, .(name, seed)],
+      by.x = "team_name", by.y = "name", all.x = TRUE
+    )
+  }
+
+  if ("seed" %in% names(pick_seeds)) {
+    seed_own <- pick_seeds[, .N, by = .(slot_id, seed, year)]
+    slot_totals <- pick_seeds[, .(total = .N), by = .(slot_id, year)]
+    seed_own <- merge(seed_own, slot_totals, by = c("slot_id", "year"))
+    seed_own[, pct := N / total]
+
+    # For R64 slots, seeds 1-4 should dominate
+    r1_seeds <- seed_own[slot_id %in% c("R1_d1", "R1_d2")]
+    if (nrow(r1_seeds) > 0) {
+      chalk_rate <- r1_seeds[seed <= 4, sum(N)] / r1_seeds[, sum(N)]
+      results$r1_chalk_rate <- chalk_rate
+      cat(sprintf("  R64 chalk rate (seeds 1-4): %.1f%%\n", 100 * chalk_rate))
+    }
+  }
+
+  # --- 2. Pick transition analysis ---
+  # How do entries' picks evolve across rounds?
+  # Convert to wide format: one row per entry, one column per slot
+  entry_wide <- dcast(picks_dt, entry_id + year ~ slot_id,
+                       value.var = "team_alias", fun.aggregate = function(x) x[1])
+
+  results$n_entries_by_year <- picks_dt[, uniqueN(entry_id), by = year]
+
+  # --- 3. Reuse analysis ---
+  # This shouldn't happen (rules forbid it) but good to verify
+  reuse_check <- picks_dt[, .(n_uses = .N), by = .(entry_id, year, team_alias)]
+  n_reuse <- sum(reuse_check$n_uses > 1)
+  if (n_reuse > 0) {
+    cat(sprintf("  WARNING: %d entries reused a team (should be 0)\n", n_reuse))
+  } else {
+    cat("  No team reuse detected (good)\n")
+  }
+
+  # --- 4. Elimination curve ---
+  # What fraction of entries are alive after each slot?
+  if ("won" %in% names(picks_dt)) {
+    slot_order_a <- c("R1_d1", "R1_d2", "R2_d1", "R2_d2",
+                       "S16_d1", "S16_d2", "E8", "FF", "CHAMP")
+
+    for (yr in unique(picks_dt$year)) {
+      yr_picks <- picks_dt[year == yr]
+      total <- uniqueN(yr_picks$entry_id)
+      cat(sprintf("  %d elimination curve (%d entries):\n", yr, total))
+
+      alive_ids <- unique(yr_picks$entry_id)
+      for (sid in slot_order_a) {
+        slot_picks <- yr_picks[slot_id == sid & entry_id %in% alive_ids]
+        if (nrow(slot_picks) == 0) {
+          cat(sprintf("    %-8s: no picks (all eliminated)\n", sid))
+          break
+        }
+        n_alive_before <- length(alive_ids)
+        died <- slot_picks[won == FALSE, unique(entry_id)]
+        alive_ids <- setdiff(alive_ids, died)
+        cat(sprintf("    %-8s: %5d alive -> %5d (%4.1f%% survival, %4.1f%% of field)\n",
+                    sid, n_alive_before, length(alive_ids),
+                    100 * length(alive_ids) / n_alive_before,
+                    100 * length(alive_ids) / total))
+      }
+    }
+  }
+
+  results
+}
+
+#' Calibrate ownership model from full pick histories
+#'
+#' Fits beta_wp and save_strength parameters by minimizing MSE between
+#' predicted and empirical ownership across all slots and years.
+#'
+#' @param picks_dt data.table from parse_splash_results()
+#' @param teams_dt Teams data frame
 #' @param sim_matrix Sim results matrix
 #' @param round_info Round info from sim output
-#' @return Named list of fitted parameters: beta_wp, save_strengths
-calibrate_from_historical <- function(hist_own, teams_dt, sim_matrix, round_info) {
-  cat("Calibrating ownership model from historical data...\n")
+#' @return Named list of fitted parameters: beta_wp, save_strengths, loss
+calibrate_from_picks <- function(picks_dt, teams_dt, sim_matrix, round_info) {
+  cat("Calibrating ownership model from pick histories...\n")
 
-  # For each slot in the historical data, compare predicted vs actual
+  # Compute empirical ownership
+  emp_own <- compute_empirical_ownership(picks_dt)
+
+  # Get unique slots to fit against
+  slots_to_fit <- unique(emp_own$slot_id)
+  cat(sprintf("  Fitting against %d slots\n", length(slots_to_fit)))
+
   loss_fn <- function(par) {
     beta_wp <- par[1]
-    # save_strengths by round (6 params, but we only fit rounds 1-4)
     save_str <- c(par[2], par[3], par[4], par[5], 0, 0)
 
     total_err <- 0
     n_obs <- 0
 
-    for (sid in unique(hist_own$slot_id)) {
-      actual <- hist_own[slot_id == sid]
-      if (nrow(actual) < 4) next
-
-      # Get slot info (try to match to our slot definitions)
+    for (sid in slots_to_fit) {
       slot <- tryCatch(get_slot(sid), error = function(e) NULL)
       if (is.null(slot)) next
 
       round_num <- slot$round_num
       game_idxs <- slot$game_indices
 
-      # Compute predicted ownership with trial params
+      # Get candidates
       candidates <- if (round_num == 1) {
         cids <- integer(0)
         for (g in game_idxs) cids <- c(cids, teams_dt$team_id[2*g-1], teams_dt$team_id[2*g])
@@ -409,44 +656,48 @@ calibrate_from_historical <- function(hist_own, teams_dt, sim_matrix, round_info
       } else {
         get_round_candidates(game_idxs, teams_dt, sim_matrix)
       }
-
       if (nrow(candidates) == 0) next
 
+      # Predicted ownership with trial params
       wp <- compute_slot_win_probs(candidates, game_idxs, round_num, teams_dt, sim_matrix)
       fv <- compute_future_value(candidates, sim_matrix, round_num)
 
       log_attract <- beta_wp * wp - save_str[round_num] * fv
       log_attract <- log_attract - max(log_attract)
       pred <- exp(log_attract) / sum(exp(log_attract))
+      names(pred) <- candidates$name
 
-      # Match actual to candidates
-      actual_matched <- actual[match(candidates$name, actual$team_name)]
-      actual_pct <- actual_matched$pick_pct
-      actual_pct[is.na(actual_pct)] <- 0
-      if (sum(actual_pct) > 0) actual_pct <- actual_pct / sum(actual_pct)
+      # Compare against empirical (average across years)
+      emp_slot <- emp_own[slot_id == sid, .(pct = mean(ownership_pct)), by = team_name]
 
-      total_err <- total_err + sum((pred - actual_pct)^2)
-      n_obs <- n_obs + 1
+      # Match by name
+      for (j in seq_len(nrow(emp_slot))) {
+        tm <- emp_slot$team_name[j]
+        actual_pct <- emp_slot$pct[j]
+        pred_pct <- if (tm %in% names(pred)) pred[tm] else 0
+        total_err <- total_err + (pred_pct - actual_pct)^2
+        n_obs <- n_obs + 1
+      }
     }
 
     if (n_obs == 0) return(1e6)
     total_err / n_obs
   }
 
-  # Optimize
   fit <- optim(c(4.0, 0.6, 0.5, 0.35, 0.15), loss_fn,
                method = "Nelder-Mead", control = list(maxit = 5000))
 
   result <- list(
     beta_wp = fit$par[1],
     save_strengths = c(fit$par[2], fit$par[3], fit$par[4], fit$par[5], 0, 0),
-    loss = fit$value
+    loss = fit$value,
+    converged = fit$convergence == 0
   )
 
   cat(sprintf("  Fitted: beta_wp=%.3f, save=[%.3f, %.3f, %.3f, %.3f]\n",
               result$beta_wp, result$save_strengths[1], result$save_strengths[2],
               result$save_strengths[3], result$save_strengths[4]))
-  cat(sprintf("  Loss: %.6f\n", result$loss))
+  cat(sprintf("  MSE: %.8f  (converged: %s)\n", result$loss, result$converged))
 
   result
 }
