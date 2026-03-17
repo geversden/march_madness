@@ -418,13 +418,20 @@ compute_candidate_ev <- function(candidate_id, group, current_slot_id,
   p_field_all <- cum_survive[, n_remaining]
 
   # --- Compute expected payout per sim (vectorized by death round) ---
+  # Also track P(nobody outlasts us) per sim — this is the true P(win).
   payouts <- numeric(sim_sample_size)
+  p_win_per_sim <- numeric(sim_sample_size)  # P(we are last standing | this sim)
 
   # Case 1: We survived everything (our_death == 0)
   survived_mask <- our_death == 0L
   if (any(survived_mask)) {
-    expected_co <- p_field_all[survived_mask] * full_field
+    # P(a field entry also survives everything)
+    p0 <- p_field_all[survived_mask]
+    # P(nobody else survives) = (1 - p0)^N
+    p_nobody <- (1 - p0) ^ full_field
+    expected_co <- p0 * full_field
     payouts[survived_mask] <- prize_pool / (1 + expected_co)
+    p_win_per_sim[survived_mask] <- p_nobody
   }
 
   # Case 2: We died in round d
@@ -449,12 +456,17 @@ compute_candidate_ev <- function(candidate_id, group, current_slot_id,
 
     # EV = P(nobody outlasts) × prize / (1 + expected same-round deaths)
     payouts[died_mask] <- p_nobody * prize_pool / (1 + expected_same)
+    p_win_per_sim[died_mask] <- p_nobody
   }
 
   # --- Metrics ---
   today_round <- get_slot(current_slot_id)$round_num
   p_survive_today <- mean(tw$team_round_wins[[today_round]][, candidate_id])
-  p_win_contest <- mean(payouts > 0)
+
+  # P(win contest) = average across sims of P(we are last standing | sim)
+  # This is the true probability, not just "did the payout happen to be > 0"
+  p_win_contest <- mean(p_win_per_sim)
+
   died_sims <- our_death[our_death > 0]
   avg_death_rd <- if (length(died_sims) > 0) mean(died_sims) else NA_real_
 
