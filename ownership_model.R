@@ -359,11 +359,20 @@ load_closing_lines <- function(year, bracket_teams) {
 
 LOG_SCALE <- 0.0917
 
-sim_file <- file.path(script_dir, sprintf("sim_results_%d.rds", target_year))
-if (file.exists(sim_file)) {
-  # Simulation results for R2+ round advancement probabilities
-  cat(sprintf("Loading sim results: %s\n", basename(sim_file)))
-  sim <- readRDS(sim_file)
+sim_pq1  <- file.path(script_dir, sprintf("sim_results_%d_part1.parquet", target_year))
+sim_pq2  <- file.path(script_dir, sprintf("sim_results_%d_part2.parquet", target_year))
+sim_meta <- file.path(script_dir, sprintf("sim_results_%d_meta.rds", target_year))
+sim_rds  <- file.path(script_dir, sprintf("sim_results_%d.rds", target_year))
+if (file.exists(sim_pq1) && file.exists(sim_pq2) && file.exists(sim_meta)) {
+  cat("Loading sim results: parquet (2 parts) + meta\n")
+  library(arrow)
+  sim <- readRDS(sim_meta)
+  sim$all_results <- as.matrix(cbind(read_parquet(sim_pq1), read_parquet(sim_pq2)))
+} else if (file.exists(sim_rds)) {
+  cat(sprintf("Loading sim results: %s\n", basename(sim_rds)))
+  sim <- readRDS(sim_rds)
+}
+if (exists("sim")) {
   ri <- sim$round_info
   trp <- matrix(0, nrow = nrow(sim$teams), ncol = 6)
   for (rd in 1:6) {
@@ -511,14 +520,14 @@ SEED_TB_COEFF <- 1.2  # strength of seed tiebreaker preference
 # CALIBRATE M3 ON HISTORICAL R1 DATA (LOG-LINEAR / SOFTMAX MODEL)
 # ==============================================================================
 # Instead of multiplicative factors with power concentration, use a softmax:
-#   log_attract = β_wp*wp + β_seed*seed + β_champ*champ_prob + β_wxs*wp*seed
-#                + β_seed²*seed² + β_drop*wp_drop + β_drop²*wp_drop²
-#                + β_s1*I(seed==1) + β_s2*I(seed==2)
+#   log_attract = β_wp*wp + β_champ*champ_prob + β_wxs*wp*seed + β_drop*wp_drop
+#                + Σ β_k*I(seed==k) for k=1..12   (seed fixed effects)
 #   ownership ∝ exp(log_attract)
 #
 # Key features:
 #   champ_prob = championship probability from simulator (the "save" signal)
-#   I_save1/I_save2 = discrete save thresholds for 1-seeds and 2-seeds
+#   Seed fixed effects (12 params): replaces individual save indicators —
+#     lets optimizer find the right suppression for each seed independently
 #   wp_drop = R1-to-R2 win prob decline (capped at 0.45 to prevent outliers)
 
 bracket_dir <- file.path(script_dir, "brackets")
@@ -603,9 +612,17 @@ build_r1_features <- function(yr) {
   # Championship probability from simulator — the real "save" signal.
   # Teams with high champ_prob get saved for later rounds, suppressing R1 picks.
   # This replaces the old fv = AdjEM/max(AdjEM) which was a weak proxy.
-  sim_file <- file.path(script_dir, sprintf("sim_results_%d.rds", yr))
-  if (file.exists(sim_file)) {
-    sim_yr <- readRDS(sim_file)
+  sim_pq2_yr  <- file.path(script_dir, sprintf("sim_results_%d_part2.parquet", yr))
+  sim_meta_yr <- file.path(script_dir, sprintf("sim_results_%d_meta.rds", yr))
+  sim_rds_yr  <- file.path(script_dir, sprintf("sim_results_%d.rds", yr))
+  if (file.exists(sim_pq2_yr) && file.exists(sim_meta_yr)) {
+    sim_yr <- readRDS(sim_meta_yr)
+    # Only read game 63 (championship) column from part2 (games 33-63 → col 31)
+    champ_game <- as.integer(read_parquet(sim_pq2_yr, col_select = "game_63")[[1]])
+    champ_counts <- tabulate(champ_game, nbins = nrow(sim_yr$teams))
+    bt[, champ_prob := champ_counts[team_id] / sim_yr$n_sims]
+  } else if (file.exists(sim_rds_yr)) {
+    sim_yr <- readRDS(sim_rds_yr)
     champ_game <- sim_yr$all_results[, 63]
     champ_counts <- tabulate(champ_game, nbins = nrow(sim_yr$teams))
     bt[, champ_prob := champ_counts[team_id] / sim_yr$n_sims]
@@ -617,10 +634,10 @@ build_r1_features <- function(yr) {
   max_cp <- max(bt$champ_prob, na.rm = TRUE)
   if (max_cp > 0) bt[, champ_prob := champ_prob / max_cp]
 
-  # Save indicators: binary features for seeds 1-2
-  # Captures the discrete "save for later" behavioral threshold
-  bt[, I_save1 := as.numeric(seed == 1)]
-  bt[, I_save2 := as.numeric(seed == 2)]
+  # Seed fixed effects: one indicator per seed (1-12)
+  # Replaces individual save indicators — lets optimizer find the right
+  # level for each seed without playing whack-a-mole
+  for (s in 1:12) bt[, paste0("I_seed", s) := as.numeric(seed == s)]
 
   bt[, year := yr]
   bt
@@ -652,7 +669,7 @@ hist_features <- hist_features[!(name == "UConn" & year == 2023)]
 # --- M3 Calibration with caching ---
 # Hash the training data to detect when re-calibration is needed
 m3_cache_file <- file.path(script_dir, "m3_calibration_cache.rds")
-m3_hash_data <- hist_features[, .(name, seed, wp, wp_drop, champ_prob, I_save1, I_save2, pick_perc, year)]
+m3_hash_data <- hist_features[, .(name, seed, wp, wp_drop, champ_prob, pick_perc, year)]
 m3_data_hash <- paste0(nrow(m3_hash_data), "_", ncol(m3_hash_data), "_",
                        sum(m3_hash_data$wp, na.rm = TRUE), "_",
                        sum(m3_hash_data$wp_drop, na.rm = TRUE), "_",
@@ -668,8 +685,10 @@ if (file.exists(m3_cache_file)) {
     best_val <- m3_cache$loss
     m3_cache_valid <- TRUE
     cat(sprintf("Loaded cached M3 calibration (hash match)\n"))
-    cat(sprintf("  M3: β_wp=%.3f, β_seed=%.3f, β_champ=%.3f, β_wp×seed=%.3f, β_seed²=%.4f, β_drop=%.3f, β_s1=%.3f, β_s2=%.3f\n",
-                M3_BETA[1], M3_BETA[2], M3_BETA[3], M3_BETA[4], M3_BETA[5], M3_BETA[6], M3_BETA[7], M3_BETA[8]))
+    cat(sprintf("  M3: β_wp=%.3f, β_champ=%.3f, β_wxs=%.3f, β_drop=%.3f\n",
+                M3_BETA[1], M3_BETA[2], M3_BETA[3], M3_BETA[4]))
+    cat(sprintf("  Seed FE: %s\n",
+                paste(sprintf("s%d=%.2f", 1:12, M3_BETA[5:16]), collapse = ", ")))
     cat(sprintf("  Loss: %.6f\n\n", best_val))
   }
 }
@@ -677,20 +696,13 @@ if (file.exists(m3_cache_file)) {
 if (!m3_cache_valid) {
   cat("Calibrating M3 (log-linear softmax) on historical R1 data...\n")
 
-  # Fit log-linear model (8 params):
-  #   log(pick_share) ~ β_wp*wp + β_seed*seed + β_champ*champ_prob + β_wxs*wp*seed
-  #                    + β_seed²*seed² + β_drop*wp_drop
-  #                    + β_s1*I_save1 + β_s2*I_save2
-  #
-  # champ_prob = championship probability from simulator (the "save" signal)
-  # I_save1/I_save2 = binary indicators for 1-seeds/2-seeds (discrete save threshold)
-  # wp_drop = wp_R1 - wp_R2: "use it or lose it" signal (capped at 0.45)
-  # Note: wp_drop² removed — with the 0.45 cap, the quadratic created a
-  # non-monotonic relationship (peaking at ~0.38 then declining). Linear is cleaner.
+  # Fit log-linear model (16 params):
+  #   log(pick_share) ~ β_wp*wp + β_champ*champ_prob + β_wxs*wp*seed + β_drop*wp_drop
+  #                    + Σ β_k * I(seed==k) for k=1..12
+  # Pure MSE loss — no artificial penalties, no weighting.
   m3_loglinear_loss <- function(par) {
-    b_wp <- par[1]; b_seed <- par[2]; b_champ <- par[3]
-    b_wxs <- par[4]; b_seed2 <- par[5]; b_drop <- par[6]
-    b_s1 <- par[7]; b_s2 <- par[8]
+    b_wp <- par[1]; b_champ <- par[2]; b_wxs <- par[3]; b_drop <- par[4]
+    b_seed_fe <- par[5:16]  # seed fixed effects for seeds 1-12
 
     total_err <- 0
     n_years <- 0
@@ -700,30 +712,15 @@ if (!m3_cache_valid) {
       if (nrow(yd) < 30) next
 
       cs <- pmin(yd$seed, 12)
-      log_attract <- b_wp * yd$wp + b_seed * cs + b_champ * yd$champ_prob +
-                     b_wxs * yd$wp * cs + b_seed2 * cs^2 +
-                     b_drop * yd$wp_drop +
-                     b_s1 * yd$I_save1 + b_s2 * yd$I_save2
+      seed_fe_vec <- b_seed_fe[cs]
+      log_attract <- b_wp * yd$wp + b_champ * yd$champ_prob +
+                     b_wxs * yd$wp * cs + b_drop * yd$wp_drop + seed_fe_vec
       log_attract <- log_attract - max(log_attract)
       pred <- exp(log_attract) / sum(exp(log_attract))
 
       actual_norm <- yd$pick_perc / sum(yd$pick_perc)
 
-      wt <- actual_norm + 0.001
-      err <- sum(wt * (pred - actual_norm)^2)
-      peak_err <- (max(pred) - max(actual_norm))^2 * 5.0
-
-      # Seed-group penalty: penalize systematic bias within seed groups
-      # This prevents the optimizer from sacrificing seed-level accuracy
-      for (sg in list(1:1, 2:2, 3:3, 4:6, 7:9, 10:12)) {
-        idx <- which(yd$seed %in% sg)
-        if (length(idx) >= 2) {
-          group_bias <- mean(pred[idx]) - mean(actual_norm[idx])
-          err <- err + group_bias^2 * 2.0
-        }
-      }
-
-      total_err <- total_err + err + peak_err
+      total_err <- total_err + sum((pred - actual_norm)^2)
       n_years <- n_years + 1
     }
 
@@ -731,27 +728,36 @@ if (!m3_cache_valid) {
     total_err / n_years
   }
 
-  # Optimize with multiple starting points (8 params)
-  # params: [b_wp, b_seed, b_champ, b_wxs, b_seed2, b_drop, b_s1, b_s2]
-  # Expected signs: b_champ < 0 (save effect), b_s1 << 0, b_s2 < 0
+  # Optimize with multiple starting points (16 params)
+  # params: [b_wp, b_champ, b_wxs, b_drop, seed_fe_1..seed_fe_12]
+  # Seed FE expected pattern: seeds 1-2 strongly negative (save), mid-seeds near 0,
+  # high seeds slightly negative (low win prob makes them unpopular)
   best_val <- Inf
-  best_par <- c(1.0, 0.2, -2.0, 0.1, 0.0, 2.0, -4.0, -2.0)
+  # Default seed FE: roughly follows historical avg pick% pattern
+  #                    s1    s2    s3    s4    s5    s6    s7    s8    s9   s10   s11   s12
+  default_fe <- c(  -3.0, -1.5, -0.5,  0.0,  0.0, -0.3, -0.5,  0.5, -0.3, -0.3, -0.5, -0.8)
+  best_par <- c(3.5, 1.0, 0.4, 5.0, default_fe)
 
   starts <- list(
-    c(3.7, -0.41, -2.0, 0.41, 0.027, 5.0, -4.0, -2.0),
-    c(3.7, -0.41, -3.0, 0.41, 0.027, 4.0, -5.0, -2.5),
-    c(2.0,  0.3,  -1.0, 0.0,  0.01,  4.0, -3.5, -1.5),
-    c(4.0, -0.5,  -1.5, 0.5,  0.03,  6.0, -4.5, -2.5),
-    c(3.0,  0.0,  -2.5, 0.3,  0.02,  3.0, -5.0, -3.0),
-    c(5.0, -0.3,  -3.0, 0.2,  0.02,  5.0, -6.0, -3.5),
-    c(3.7, -0.41, -1.0, 0.41, 0.027, 4.0, -4.5, -2.0),
-    c(2.5,  0.1,  -2.0, 0.15, 0.015, 5.5, -3.0, -1.0)
+    c(3.8, 1.1, 0.35, 5.8,  -2.5, -1.5, -0.6,  0.0,  0.0, -0.3, -0.5,  0.5, -0.3, -0.3, -0.5, -0.8),
+    c(3.0, 0.5, 0.30, 4.5,  -3.5, -2.0, -1.0, -0.3,  0.0,  0.0, -0.3,  0.3, -0.5, -0.5, -0.3, -1.0),
+    c(4.5, 1.5, 0.50, 6.0,  -2.0, -1.0, -0.3,  0.3,  0.2, -0.5, -0.8,  0.8, -0.2, -0.2, -0.6, -1.2),
+    c(3.5, 0.0, 0.40, 5.0,  -4.0, -2.5, -1.5, -0.5,  0.0,  0.0,  0.0,  0.5,  0.0,  0.0, -0.5, -0.5),
+    c(2.5, 2.0, 0.25, 4.0,  -3.0, -1.8, -0.8,  0.2,  0.3, -0.2, -0.4,  0.6, -0.4, -0.1, -0.4, -0.9),
+    c(5.0, 0.8, 0.45, 7.0,  -2.0, -1.2, -0.4,  0.1,  0.1, -0.4, -0.6,  0.4, -0.1, -0.4, -0.7, -1.5),
+    c(3.5, 1.0, 0.40, 5.5,  -2.8, -1.6, -0.7,  0.0,  0.0, -0.2, -0.3,  0.7, -0.2, -0.2, -0.6, -1.0),
+    c(4.0, 0.3, 0.35, 5.0,  -3.5, -2.2, -1.2, -0.2,  0.1, -0.1, -0.5,  0.3, -0.3, -0.3, -0.4, -0.7)
   )
+
+  # L-BFGS-B handles 16 dimensions much better than Nelder-Mead
+  lo <- c(-10, -10, -2, -10, rep(-8, 12))
+  hi <- c( 15,  15,  3,  15, rep( 8, 12))
 
   for (s in starts) {
     opt_try <- tryCatch(
-      optim(s, m3_loglinear_loss, method = "Nelder-Mead",
-            control = list(maxit = 15000)),
+      optim(s, m3_loglinear_loss, method = "L-BFGS-B",
+            lower = lo, upper = hi,
+            control = list(maxit = 5000)),
       error = function(e) list(value = Inf, par = s))
     if (opt_try$value < best_val) {
       best_val <- opt_try$value
@@ -760,8 +766,10 @@ if (!m3_cache_valid) {
   }
 
   M3_BETA <- best_par
-  cat(sprintf("  Fitted M3: β_wp=%.3f, β_seed=%.3f, β_champ=%.3f, β_wp×seed=%.3f, β_seed²=%.4f, β_drop=%.3f, β_s1=%.3f, β_s2=%.3f\n",
-              M3_BETA[1], M3_BETA[2], M3_BETA[3], M3_BETA[4], M3_BETA[5], M3_BETA[6], M3_BETA[7], M3_BETA[8]))
+  cat(sprintf("  Fitted M3: β_wp=%.3f, β_champ=%.3f, β_wxs=%.3f, β_drop=%.3f\n",
+              M3_BETA[1], M3_BETA[2], M3_BETA[3], M3_BETA[4]))
+  cat(sprintf("  Seed FE: %s\n",
+              paste(sprintf("s%d=%.2f", 1:12, M3_BETA[5:16]), collapse = ", ")))
   cat(sprintf("  Loss: %.6f\n\n", best_val))
 
   # Save cache
@@ -773,13 +781,10 @@ if (!m3_cache_valid) {
 # Function to predict R1 ownership using fitted log-linear model
 m3_predict_r1 <- function(wp, seed, champ_prob, wp_drop) {
   cs <- pmin(seed, 12)
-  I_save1 <- as.numeric(seed == 1)
-  I_save2 <- as.numeric(seed == 2)
   wp_drop_c <- pmin(wp_drop, 0.45)
-  log_attract <- M3_BETA[1]*wp + M3_BETA[2]*cs + M3_BETA[3]*champ_prob +
-                 M3_BETA[4]*wp*cs + M3_BETA[5]*cs^2 +
-                 M3_BETA[6]*wp_drop_c +
-                 M3_BETA[7]*I_save1 + M3_BETA[8]*I_save2
+  seed_fe_vec <- M3_BETA[4 + cs]  # seed fixed effects at indices 5:16
+  log_attract <- M3_BETA[1]*wp + M3_BETA[2]*champ_prob +
+                 M3_BETA[3]*wp*cs + M3_BETA[4]*wp_drop_c + seed_fe_vec
   log_attract <- log_attract - max(log_attract)
   exp(log_attract) / sum(exp(log_attract))
 }
@@ -792,10 +797,9 @@ for (cal_year in HISTORICAL_YEARS) {
   cal_yr <- hist_features[year == cal_year]
   if (nrow(cal_yr) < 30) next
   cs <- pmin(cal_yr$seed, 12)
-  la <- M3_BETA[1]*cal_yr$wp + M3_BETA[2]*cs + M3_BETA[3]*cal_yr$champ_prob +
-        M3_BETA[4]*cal_yr$wp*cs + M3_BETA[5]*cs^2 +
-        M3_BETA[6]*cal_yr$wp_drop +
-        M3_BETA[7]*cal_yr$I_save1 + M3_BETA[8]*cal_yr$I_save2
+  seed_fe_vec <- M3_BETA[4 + cs]
+  la <- M3_BETA[1]*cal_yr$wp + M3_BETA[2]*cal_yr$champ_prob +
+        M3_BETA[3]*cal_yr$wp*cs + M3_BETA[4]*cal_yr$wp_drop + seed_fe_vec
   la <- la - max(la)
   cal_pred_norm <- exp(la) / sum(exp(la))
   # Convert to raw pick%: multiply by PICKS_PER_ROUND for R1 (=3)

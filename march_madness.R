@@ -25,7 +25,7 @@ if (length(args) >= 1) {
 } else if (nzchar(Sys.getenv("TOURNEY_YEAR", ""))) {
   YEAR <- as.integer(Sys.getenv("TOURNEY_YEAR"))
 } else {
-  YEAR <- 2025L
+  YEAR <- 2026L
 }
 cat(sprintf("Tournament year: %d\n\n", YEAR))
 
@@ -35,9 +35,25 @@ cat(sprintf("Tournament year: %d\n\n", YEAR))
 
 kenpom_file <- file.path(script_dir, "kenpom_data",
                          sprintf("kenpom_%d.csv", YEAR))
-if (!file.exists(kenpom_file)) stop("Cannot find ", kenpom_file)
+
+# Fallback: look for dated kenpom_ratings_YYYY-MM-DD.csv files (most recent first)
+if (!file.exists(kenpom_file)) {
+  dated_files <- sort(
+    Sys.glob(file.path(script_dir, "kenpom_data",
+                       sprintf("kenpom_ratings_%d-*.csv", YEAR))),
+    decreasing = TRUE)
+  if (length(dated_files) > 0) {
+    kenpom_file <- dated_files[1]
+    cat(sprintf("Using dated KenPom file: %s\n", basename(kenpom_file)))
+  }
+}
+if (!file.exists(kenpom_file)) stop("Cannot find KenPom data for ", YEAR)
 
 kp <- read.csv(kenpom_file, stringsAsFactors = FALSE)
+
+# Normalise column names: dated scrape uses "team"/"adj_em", legacy uses "Team"/"NetRtg"
+if ("team" %in% names(kp) && !"Team" %in% names(kp)) names(kp)[names(kp) == "team"] <- "Team"
+if ("adj_em" %in% names(kp) && !"NetRtg" %in% names(kp)) names(kp)[names(kp) == "adj_em"] <- "NetRtg"
 
 # Clean up: remove repeated header rows and blank rows from KenPom scrape
 kp <- kp[!is.na(kp$Team) & kp$Team != "" & kp$Team != "Team", ]
@@ -142,8 +158,9 @@ if (file.exists(cl_file)) {
   resolve_cl_name <- function(cl_name) {
     # Dictionary lookup first
     if (cl_name %in% names(cl_to_bracket)) return(cl_to_bracket[[cl_name]])
-    # Prefix match: strip mascot suffix
-    for (bn in teams$name) {
+    # Prefix match: longest bracket name first to avoid "Texas" matching before "Texas Tech"
+    sorted_names <- teams$name[order(nchar(teams$name), decreasing = TRUE)]
+    for (bn in sorted_names) {
       if (startsWith(cl_name, bn)) return(bn)
     }
     cl_name
@@ -202,7 +219,7 @@ if (file.exists(cl_file)) {
 # RUN SIMULATIONS
 # ==============================================================================
 
-N_SIMS        <- 100000
+N_SIMS        <- 10000000
 UPDATE_FACTOR <- 3.0    # max rating bump per win; actual boost = factor * (1 - win_prob)
 
 set.seed(42)  # for reproducibility
@@ -261,10 +278,24 @@ sim_output <- list(
   year          = YEAR
 )
 
-rds_file <- file.path(script_dir, sprintf("sim_results_%d.rds", YEAR))
-saveRDS(sim_output, rds_file)
-cat(sprintf("Full results saved to sim_results_%d.rds  (%s sims x 63 games)\n\n",
-            YEAR, format(N_SIMS, big.mark = ",")))
+# Save as 2 Parquet files (split all_results) + small RDS (metadata)
+library(arrow)
+ar_df <- as.data.frame(results$all_results)
+colnames(ar_df) <- paste0("game_", 1:63)
+
+pq_file_1 <- file.path(script_dir, sprintf("sim_results_%d_part1.parquet", YEAR))
+pq_file_2 <- file.path(script_dir, sprintf("sim_results_%d_part2.parquet", YEAR))
+write_parquet(ar_df[, 1:32],  pq_file_1, compression = "zstd", compression_level = 9)
+write_parquet(ar_df[, 33:63], pq_file_2, compression = "zstd", compression_level = 9)
+
+meta_output <- sim_output
+meta_output$all_results <- NULL  # strip the big matrix
+rds_file <- file.path(script_dir, sprintf("sim_results_%d_meta.rds", YEAR))
+saveRDS(meta_output, rds_file)
+
+cat(sprintf("Results saved: %s + %s + %s  (%s sims x 63 games)\n\n",
+            basename(pq_file_1), basename(pq_file_2), basename(rds_file),
+            format(N_SIMS, big.mark = ",")))
 
 # ==============================================================================
 # DISPLAY: CHAMPIONSHIP PROBABILITIES

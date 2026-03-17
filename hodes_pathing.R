@@ -35,7 +35,15 @@ library(data.table)
 # LOAD SIMULATION RESULTS
 # ==============================================================================
 
-sim <- readRDS("sim_results.rds")
+if (file.exists("sim_results_part1.parquet") && file.exists("sim_results_part2.parquet") &&
+    file.exists("sim_results_meta.rds")) {
+  library(arrow)
+  sim <- readRDS("sim_results_meta.rds")
+  sim$all_results <- as.matrix(cbind(read_parquet("sim_results_part1.parquet"),
+                                     read_parquet("sim_results_part2.parquet")))
+} else {
+  sim <- readRDS("sim_results.rds")
+}
 teams <- as.data.table(sim$teams)
 ar <- sim$all_results       # n_sims x 63 integer matrix
 ri <- sim$round_info
