@@ -220,7 +220,7 @@ if (file.exists(cl_file)) {
 # ==============================================================================
 
 N_SIMS        <- 2000000
-UPDATE_FACTOR <- 3.0    # max rating bump per win; actual boost = factor * (1 - win_prob)
+UPDATE_FACTOR <- 0.5    # max rating bump per win; actual boost = factor * (1 - win_prob)
 
 set.seed(42)  # for reproducibility
 
