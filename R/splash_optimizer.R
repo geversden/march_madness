@@ -186,7 +186,7 @@ forward_simulate_entry <- function(candidate_id, used_teams, current_slot_id,
   death_round[died_today] <- round_num
   alive <- alive & today_wins
 
-  # Future slots: greedily assign best available team
+  # Future slots: greedily assign best available team (bracket-aware)
   for (s in (current_slot_idx + 1):length(slot_order)) {
     if (s > length(slot_order)) break
 
@@ -195,12 +195,32 @@ forward_simulate_entry <- function(candidate_id, used_teams, current_slot_id,
     future_round <- future_slot$round_num
     n_future_picks <- get_n_picks(sid, format)
 
-    # Find best available teams for this future slot (by marginal win prob)
-    future_probs <- tw$team_round_probs[, future_round]
-    future_probs[all_used] <- -1  # exclude used teams
+    # Day constraint: only teams playing in this slot
+    slot_team_ids <- get_teams_in_slot(sid, teams_dt)
+    slot_team_ids <- setdiff(slot_team_ids, all_used)
 
-    # Pick top n_future_picks teams
-    best_ids <- order(future_probs, decreasing = TRUE)[1:n_future_picks]
+    if (length(slot_team_ids) == 0) {
+      died_here <- alive
+      death_round[died_here] <- future_round
+      alive <- rep(FALSE, n_sims)
+      break
+    }
+
+    # Bracket-aware scoring: prefer teams that win THIS round but lose NEXT.
+    # Score = P(wins round r) - P(wins round r+1) for rounds 1-5
+    #       = P(wins round 6)                     for CHAMP
+    slot_win_probs <- tw$team_round_probs[slot_team_ids, future_round]
+
+    if (future_round < 6) {
+      next_round_probs <- tw$team_round_probs[slot_team_ids, future_round + 1]
+      score <- slot_win_probs - next_round_probs
+    } else {
+      score <- slot_win_probs
+    }
+
+    n_to_pick <- min(n_future_picks, length(slot_team_ids))
+    best_local_idx <- order(score, decreasing = TRUE)[1:n_to_pick]
+    best_ids <- slot_team_ids[best_local_idx]
     all_used <- c(all_used, best_ids)
 
     # Check survival
@@ -431,7 +451,7 @@ compute_candidate_ev <- function(candidate_id, group, current_slot_id,
     p_nobody <- (1 - p0) ^ full_field
     expected_co <- p0 * full_field
     payouts[survived_mask] <- prize_pool / (1 + expected_co)
-    p_win_per_sim[survived_mask] <- p_nobody
+    p_win_per_sim[survived_mask] <- 1.0
   }
 
   # Case 2: We died in round d
