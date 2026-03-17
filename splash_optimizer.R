@@ -88,7 +88,7 @@ precompute_team_wins <- function(sim) {
 #'   death_round: integer vector (length n_sims) — round entry dies (0 = survived all)
 #'   survival_prob: scalar probability of surviving all rounds
 forward_simulate_entry <- function(candidate_id, used_teams, current_slot_id,
-                                    sim, tw, teams_dt) {
+                                    sim, tw, teams_dt, slot_order = SLOT_ORDER) {
   n_sims <- sim$n_sims
   n_teams <- nrow(teams_dt)
 
@@ -96,17 +96,8 @@ forward_simulate_entry <- function(candidate_id, used_teams, current_slot_id,
   alive <- rep(TRUE, n_sims)
   death_round <- rep(0L, n_sims)  # 0 = survived everything
 
-  current_slot_idx <- match(current_slot_id, SLOT_ORDER)
+  current_slot_idx <- match(current_slot_id, slot_order)
   all_used <- c(used_teams, candidate_id)
-
-  # Check past picks (should all have survived — filter sims accordingly)
-  for (s in seq_len(current_slot_idx - 1)) {
-    sid <- SLOT_ORDER[s]
-    # Past picks are already locked in — we assume the entry is alive,
-    # so we'd filter to sims where all past picks won.
-    # However, for efficiency, the caller should pre-filter sims.
-    # For now, we trust that entries marked alive have valid past picks.
-  }
 
   # Check today's pick
   slot <- get_slot(current_slot_id)
@@ -117,10 +108,10 @@ forward_simulate_entry <- function(candidate_id, used_teams, current_slot_id,
   alive <- alive & today_wins
 
   # Future slots: greedily assign best available team
-  for (s in (current_slot_idx + 1):length(SLOT_ORDER)) {
-    if (s > length(SLOT_ORDER)) break
+  for (s in (current_slot_idx + 1):length(slot_order)) {
+    if (s > length(slot_order)) break
 
-    sid <- SLOT_ORDER[s]
+    sid <- slot_order[s]
     future_slot <- get_slot(sid)
     future_round <- future_slot$round_num
     n_future_picks <- future_slot$n_picks
@@ -155,13 +146,14 @@ forward_simulate_entry <- function(candidate_id, used_teams, current_slot_id,
 #' @param current_slot_id Current slot being decided
 #' @param tw Precomputed team wins
 #' @return Logical vector of length n_sims (TRUE = this sim is consistent)
-filter_sims_for_entry <- function(state_row, current_slot_id, tw) {
-  current_idx <- match(current_slot_id, SLOT_ORDER)
+filter_sims_for_entry <- function(state_row, current_slot_id, tw,
+                                    slot_order = SLOT_ORDER) {
+  current_idx <- match(current_slot_id, slot_order)
   n_sims <- nrow(tw$team_round_wins[[1]])
   mask <- rep(TRUE, n_sims)
 
   for (s in seq_len(current_idx - 1)) {
-    sid <- SLOT_ORDER[s]
+    sid <- slot_order[s]
     col <- slot_col_name(sid)
     pick_id <- state_row[[col]]
     if (is.na(pick_id)) next
@@ -191,11 +183,12 @@ filter_sims_for_entry <- function(state_row, current_slot_id, tw) {
 #' @param start_slot_idx Integer index into SLOT_ORDER to start from
 #' @return Integer death round (0 = survived everything)
 simulate_field_entry <- function(sim_idx, ownership_by_slot, teams_dt, tw,
-                                  field_used, start_slot_idx) {
+                                  field_used, start_slot_idx,
+                                  slot_order = SLOT_ORDER) {
   used <- field_used
 
-  for (s in start_slot_idx:length(SLOT_ORDER)) {
-    sid <- SLOT_ORDER[s]
+  for (s in start_slot_idx:length(slot_order)) {
+    sid <- slot_order[s]
     slot <- get_slot(sid)
     round_num <- slot$round_num
     n_picks <- slot$n_picks
@@ -262,22 +255,14 @@ compute_candidate_ev <- function(candidate_id, group, current_slot_id,
     n_field_samples <- min(contest_size - our_n, 200)
   }
 
-  current_idx <- match(current_slot_id, SLOT_ORDER)
-
-  # Pre-filter sims consistent with prior picks
-  # For the group, all entries have the same prior picks
-  prior_mask <- rep(TRUE, n_sims)
-  for (s in seq_len(current_idx - 1)) {
-    sid <- SLOT_ORDER[s]
-    col <- slot_col_name(sid)
-    # Need to look up what this group picked — it's in used_teams but we need
-    # per-slot info. For now, use the team_round_wins check.
-    # This is a simplification: we assume the entry is alive (already filtered).
-  }
+  # Determine slot order for this group's format
+  group_format <- if ("format" %in% names(group)) group$format else "A"
+  slot_order <- get_slot_order(group_format)
+  current_idx <- match(current_slot_id, slot_order)
 
   # Our entry's forward simulation
   our_result <- forward_simulate_entry(candidate_id, used_teams, current_slot_id,
-                                        sim, tw, teams_dt)
+                                        sim, tw, teams_dt, slot_order = slot_order)
   our_death <- our_result$death_round  # 0 = survived, else round number
 
   # Subsample sims for field simulation (expensive)
@@ -303,7 +288,8 @@ compute_candidate_ev <- function(candidate_id, group, current_slot_id,
       # (their prior picks are already accounted for in ownership availability)
       field_deaths[f] <- simulate_field_entry(
         sim_i, ownership_by_slot, teams_dt, tw,
-        field_used = integer(0), start_slot_idx = current_idx
+        field_used = integer(0), start_slot_idx = current_idx,
+        slot_order = slot_order
       )
     }
 
@@ -319,9 +305,8 @@ compute_candidate_ev <- function(candidate_id, group, current_slot_id,
       payouts[si] <- prize_pool / (scaled_field_survivors + 1)
     } else {
       # We died in round my_death
-      # Did anyone survive longer?
-      field_survived_longer <- sum(field_deaths == 0 | (field_deaths > my_death & field_deaths != 0))
-      field_survived_longer <- field_survived_longer + sum(field_deaths == 0)
+      # Did anyone survive longer? (death==0 means survived everything, or died later)
+      field_survived_longer <- sum(field_deaths == 0 | (field_deaths > my_death))
 
       if (field_survived_longer > 0) {
         # Someone outlasted us — we lose
@@ -603,12 +588,17 @@ run_optimizer <- function(sim_file, state_file = NULL, current_slot_id,
               length(candidates), paste(candidates, collapse = ", ")))
 
   # Estimate ownership for all slots (current + future)
+  # Use ALL_SLOT_IDS superset so ownership covers both format A and B entries
   cat("\nEstimating ownership...\n")
   ownership_by_slot <- list()
-  current_idx <- match(current_slot_id, SLOT_ORDER)
+  all_future_slots <- unique(unlist(lapply(c("A", "B"), function(fmt) {
+    so <- get_slot_order(fmt)
+    idx <- match(current_slot_id, so)
+    if (is.na(idx)) return(character(0))
+    so[idx:length(so)]
+  })))
 
-  for (s in current_idx:length(SLOT_ORDER)) {
-    sid <- SLOT_ORDER[s]
+  for (sid in all_future_slots) {
     own <- estimate_ownership(sid, teams_dt, sim$all_results, sim$round_info)
     ownership_by_slot[[sid]] <- own
   }

@@ -311,4 +311,144 @@ print_ownership <- function(slot_id, ownership, teams_dt, sim_matrix) {
   invisible(display)
 }
 
+# ==============================================================================
+# HISTORICAL OWNERSHIP DATA (CSV)
+# ==============================================================================
+
+#' Load historical Splash ownership data from CSV
+#'
+#' Expected CSV format (flexible — will adapt to what's available):
+#'   year, slot_id, team_name, seed, pick_pct
+#'
+#' Or simpler formats:
+#'   year, round, team_name, pick_pct
+#'   year, day, team_name, pick_pct
+#'
+#' @param file Path to CSV file
+#' @return data.table with standardized columns: year, slot_id, team_name, pick_pct
+load_historical_ownership <- function(file) {
+  dt <- fread(file)
+
+  # Standardize column names (case-insensitive matching)
+  nms <- tolower(names(dt))
+  names(dt) <- nms
+
+  # Map common column name variants
+  if ("team" %in% nms && !"team_name" %in% nms) setnames(dt, "team", "team_name")
+  if ("pct" %in% nms && !"pick_pct" %in% nms) setnames(dt, "pct", "pick_pct")
+  if ("ownership" %in% nms && !"pick_pct" %in% nms) setnames(dt, "ownership", "pick_pct")
+  if ("pick_perc" %in% nms && !"pick_pct" %in% nms) setnames(dt, "pick_perc", "pick_pct")
+
+  # If pick_pct looks like percentages (>1), convert to fractions
+  if (max(dt$pick_pct, na.rm = TRUE) > 1) {
+    dt[, pick_pct := pick_pct / 100]
+  }
+
+  # If no slot_id but has round/day, derive slot_id
+  if (!"slot_id" %in% names(dt) && "round" %in% names(dt) && "day" %in% names(dt)) {
+    dt[, slot_id := paste0("R", round, "_d", day)]
+  } else if (!"slot_id" %in% names(dt) && "round" %in% names(dt)) {
+    # Just round number, no day split — assign as round-level
+    dt[, slot_id := paste0("R", round)]
+  }
+
+  required <- c("team_name", "pick_pct")
+  missing <- setdiff(required, names(dt))
+  if (length(missing) > 0) {
+    stop("Historical ownership CSV missing required columns: ",
+         paste(missing, collapse = ", "),
+         "\n  Found columns: ", paste(names(dt), collapse = ", "))
+  }
+
+  cat(sprintf("Loaded historical ownership: %d rows", nrow(dt)))
+  if ("year" %in% names(dt)) cat(sprintf(", years %d-%d", min(dt$year), max(dt$year)))
+  if ("slot_id" %in% names(dt)) cat(sprintf(", %d unique slots", uniqueN(dt$slot_id)))
+  cat("\n")
+
+  dt
+}
+
+#' Calibrate ownership model parameters from historical data
+#'
+#' Fits the softmax beta_wp parameter (and optionally save_strength) by
+#' minimizing prediction error against actual historical ownership.
+#'
+#' @param hist_own data.table from load_historical_ownership()
+#' @param teams_dt Teams data frame (for seed lookup)
+#' @param sim_matrix Sim results matrix
+#' @param round_info Round info from sim output
+#' @return Named list of fitted parameters: beta_wp, save_strengths
+calibrate_from_historical <- function(hist_own, teams_dt, sim_matrix, round_info) {
+  cat("Calibrating ownership model from historical data...\n")
+
+  # For each slot in the historical data, compare predicted vs actual
+  loss_fn <- function(par) {
+    beta_wp <- par[1]
+    # save_strengths by round (6 params, but we only fit rounds 1-4)
+    save_str <- c(par[2], par[3], par[4], par[5], 0, 0)
+
+    total_err <- 0
+    n_obs <- 0
+
+    for (sid in unique(hist_own$slot_id)) {
+      actual <- hist_own[slot_id == sid]
+      if (nrow(actual) < 4) next
+
+      # Get slot info (try to match to our slot definitions)
+      slot <- tryCatch(get_slot(sid), error = function(e) NULL)
+      if (is.null(slot)) next
+
+      round_num <- slot$round_num
+      game_idxs <- slot$game_indices
+
+      # Compute predicted ownership with trial params
+      candidates <- if (round_num == 1) {
+        cids <- integer(0)
+        for (g in game_idxs) cids <- c(cids, teams_dt$team_id[2*g-1], teams_dt$team_id[2*g])
+        teams_dt[teams_dt$team_id %in% unique(cids), ]
+      } else {
+        get_round_candidates(game_idxs, teams_dt, sim_matrix)
+      }
+
+      if (nrow(candidates) == 0) next
+
+      wp <- compute_slot_win_probs(candidates, game_idxs, round_num, teams_dt, sim_matrix)
+      fv <- compute_future_value(candidates, sim_matrix, round_num)
+
+      log_attract <- beta_wp * wp - save_str[round_num] * fv
+      log_attract <- log_attract - max(log_attract)
+      pred <- exp(log_attract) / sum(exp(log_attract))
+
+      # Match actual to candidates
+      actual_matched <- actual[match(candidates$name, actual$team_name)]
+      actual_pct <- actual_matched$pick_pct
+      actual_pct[is.na(actual_pct)] <- 0
+      if (sum(actual_pct) > 0) actual_pct <- actual_pct / sum(actual_pct)
+
+      total_err <- total_err + sum((pred - actual_pct)^2)
+      n_obs <- n_obs + 1
+    }
+
+    if (n_obs == 0) return(1e6)
+    total_err / n_obs
+  }
+
+  # Optimize
+  fit <- optim(c(4.0, 0.6, 0.5, 0.35, 0.15), loss_fn,
+               method = "Nelder-Mead", control = list(maxit = 5000))
+
+  result <- list(
+    beta_wp = fit$par[1],
+    save_strengths = c(fit$par[2], fit$par[3], fit$par[4], fit$par[5], 0, 0),
+    loss = fit$value
+  )
+
+  cat(sprintf("  Fitted: beta_wp=%.3f, save=[%.3f, %.3f, %.3f, %.3f]\n",
+              result$beta_wp, result$save_strengths[1], result$save_strengths[2],
+              result$save_strengths[3], result$save_strengths[4]))
+  cat(sprintf("  Loss: %.6f\n", result$loss))
+
+  result
+}
+
 cat("Splash ownership module loaded\n")
