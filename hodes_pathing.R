@@ -35,7 +35,7 @@ library(data.table)
 # LOAD SIMULATION RESULTS
 # ==============================================================================
 
-sim <- readRDS("sim_results.rds")
+sim <- readRDS("sim_results_2024.rds")
 teams <- as.data.table(sim$teams)
 ar <- sim$all_results       # n_sims x 63 integer matrix
 ri <- sim$round_info

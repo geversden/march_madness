@@ -31,6 +31,7 @@ library(httr)
 #'   format      (character) - optional, "A" (E8 combined) or "B" (E8 split). Default "A".
 #' @return data.table of entry state
 init_portfolio <- function(contests_df) {
+  setDT(contests_df)
   contests_df <- as.data.table(contests_df)
   required_cols <- c("contest_id", "contest_size", "entry_fee", "prize_pool", "n_entries")
   missing <- setdiff(required_cols, names(contests_df))
@@ -333,10 +334,10 @@ import_from_splash <- function(contest_id, auth_headers, our_username = "TinkyTy
 load_contests_csv <- function(file, include_hodes = FALSE) {
   raw <- fread(file)
   cat(sprintf("Read %d contest rows from %s\n", nrow(raw), basename(file)))
-
+  
   # Standardize column names
   nms <- names(raw)
-  # Handle exact column names from Tyler's CSV
+  # Handle exact column names from your CSV
   col_map <- c(
     "Contest"             = "contest_name",
     "URL"                 = "url",
@@ -353,56 +354,77 @@ load_contests_csv <- function(file, include_hodes = FALSE) {
   for (old_name in names(col_map)) {
     if (old_name %in% nms) setnames(raw, old_name, col_map[[old_name]])
   }
-
+  
+  # Safety net: Ensure required columns exist to prevent regex crashes later
+  if (!"url" %in% names(raw)) raw$url <- NA_character_
+  if (!"rules" %in% names(raw)) raw$rules <- NA_character_
+  if (!"contest_name" %in% names(raw)) raw$contest_name <- "Unknown Contest"
+  
   # Parse currency/numeric fields (remove $, commas)
   parse_currency <- function(x) {
     as.numeric(gsub("[\\$,]", "", x))
   }
+  
+  setDT(raw)
+  
   for (col in c("entry_fee", "prize_pool", "our_cost", "our_equity")) {
     if (col %in% names(raw)) {
-      raw[, (col) := parse_currency(get(col))]
+      raw[[col]] <- parse_currency(raw[[col]])
     }
   }
-  # contest_size and n_entries should be integer
+  
+  # contest_size and n_entries should be integer (stripping commas first to prevent NAs)
   for (col in c("contest_size", "n_entries", "entries_remaining", "our_entries_remaining")) {
     if (col %in% names(raw)) {
-      raw[, (col) := as.integer(get(col))]
+      raw[[col]] <- as.integer(gsub(",", "", raw[[col]]))
     }
   }
-
+  
   # Extract contest UUID from Splash URL
-  raw[, contest_id := {
-    uuid <- regmatches(url, regexpr("[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}", url))
-    ifelse(length(uuid) == 0, NA_character_, uuid)
-  }, by = seq_len(nrow(raw))]
+  raw$contest_id <- NA_character_
+  m <- regexpr("[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}", raw$url)
+  
+  # which() safely gets the row numbers of matches and drops any NAs
+  valid_idx <- which(m != -1) 
+  
+  if (length(valid_idx) > 0) {
+    # Pass the full 'url' and full 'm' to preserve attributes.
+    # regmatches automatically outputs a vector of ONLY the successful matches.
+    raw$contest_id[valid_idx] <- regmatches(raw$url, m)
+  }
+  
   # For non-Splash URLs (Hodes), use sanitized contest_name
-  raw[is.na(contest_id), contest_id := gsub("[^A-Za-z0-9]", "_", tolower(contest_name))]
-
+  missing_id <- is.na(raw$contest_id)
+  if (any(missing_id, na.rm = TRUE)) {
+    raw$contest_id[missing_id] <- gsub("[^A-Za-z0-9]", "_", tolower(raw$contest_name[missing_id]))
+  }
+  
   # Determine format from Rules column
-  raw[, format := classify_format(rules), by = seq_len(nrow(raw))]
-
+  raw$format <- sapply(raw$rules, classify_format)
+  
   # Flag Hodes
-  raw[, is_hodes := grepl("hodes", contest_name, ignore.case = TRUE) |
-                     grepl("3-3-1-1", rules, ignore.case = TRUE)]
-
+  raw$is_hodes <- grepl("hodes", raw$contest_name, ignore.case = TRUE) |
+    grepl("3-3-1-1", raw$rules, ignore.case = TRUE)
+  
   if (!include_hodes) {
-    n_hodes <- sum(raw$is_hodes)
+    n_hodes <- sum(raw$is_hodes, na.rm = TRUE)
     if (n_hodes > 0) {
       cat(sprintf("  Excluding %d Hodes contest(s) (different format, use hodes_pathing.R)\n",
                   n_hodes))
-      raw <- raw[is_hodes == FALSE]
+      # Subsetting safely
+      raw <- raw[raw$is_hodes == FALSE, ]
     }
   }
-
+  
   # Summarize
-  cat(sprintf("  %d contests: %d entries total\n", nrow(raw), sum(raw$n_entries)))
+  cat(sprintf("  %d contests: %d entries total\n", nrow(raw), sum(raw$n_entries, na.rm = TRUE)))
   for (fmt in sort(unique(raw$format))) {
-    fmt_rows <- raw[format == fmt]
+    fmt_rows <- raw[raw$format == fmt, ]
     cat(sprintf("    Format %s: %d contests, %d entries (%s)\n",
-                fmt, nrow(fmt_rows), sum(fmt_rows$n_entries),
+                fmt, nrow(fmt_rows), sum(fmt_rows$n_entries, na.rm = TRUE),
                 get_format_def(fmt)$label))
   }
-
+  
   # Return columns needed for init_portfolio plus extras
   keep_cols <- intersect(
     c("contest_id", "contest_name", "contest_size", "entry_fee",
@@ -410,7 +432,8 @@ load_contests_csv <- function(file, include_hodes = FALSE) {
       "our_entries_remaining", "our_cost", "our_equity", "rules"),
     names(raw)
   )
-  raw[, ..keep_cols]
+  
+  subset(raw, select = keep_cols)
 }
 
 #' Classify contest format from the Rules string

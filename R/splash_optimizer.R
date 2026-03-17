@@ -19,6 +19,82 @@
 library(data.table)
 
 # ==============================================================================
+# PROGRESS TRACKING UTILITIES
+# ==============================================================================
+
+#' Create a progress tracker that prints updates at fixed intervals
+#'
+#' @param total Total number of items
+#' @param label Short description of what's being processed
+#' @param update_every Minimum seconds between progress prints (default 2)
+#' @return List with tick() and done() methods
+make_progress <- function(total, label = "Processing", update_every = 2) {
+  env <- new.env(parent = emptyenv())
+  env$total <- total
+  env$current <- 0L
+  env$label <- label
+  env$start_time <- proc.time()[["elapsed"]]
+  env$last_print <- env$start_time
+  env$update_every <- update_every
+
+  tick <- function(n = 1L) {
+    env$current <- env$current + n
+    now <- proc.time()[["elapsed"]]
+    elapsed <- now - env$start_time
+    since_print <- now - env$last_print
+
+    if (since_print >= env$update_every || env$current == env$total) {
+      pct <- env$current / env$total * 100
+      rate <- env$current / max(elapsed, 0.001)
+      remaining <- (env$total - env$current) / max(rate, 0.001)
+
+      # Format ETA
+      if (remaining < 60) {
+        eta <- sprintf("%.0fs", remaining)
+      } else if (remaining < 3600) {
+        eta <- sprintf("%.1fm", remaining / 60)
+      } else {
+        eta <- sprintf("%.1fh", remaining / 3600)
+      }
+
+      # Bar: 30 chars wide
+      filled <- round(pct / 100 * 30)
+      bar <- paste0("[", strrep("=", filled),
+                    ifelse(filled < 30, ">", ""),
+                    strrep(" ", max(0, 30 - filled - 1)), "]")
+
+      cat(sprintf("\r  %s %s %5.1f%% (%s/%s) ETA %s   ",
+                  env$label, bar, pct,
+                  format(env$current, big.mark = ","),
+                  format(env$total, big.mark = ","), eta))
+      if (env$current == env$total) cat("\n")
+      flush.console()
+      env$last_print <- now
+    }
+  }
+
+  done <- function() {
+    elapsed <- proc.time()[["elapsed"]] - env$start_time
+    if (elapsed < 60) {
+      time_str <- sprintf("%.1fs", elapsed)
+    } else if (elapsed < 3600) {
+      time_str <- sprintf("%.1fm", elapsed / 60)
+    } else {
+      time_str <- sprintf("%.1fh", elapsed / 3600)
+    }
+    cat(sprintf("\r  %s: done (%s/%s in %s)%s\n",
+                env$label,
+                format(env$total, big.mark = ","),
+                format(env$total, big.mark = ","),
+                time_str,
+                strrep(" ", 30)))
+    flush.console()
+  }
+
+  list(tick = tick, done = done)
+}
+
+# ==============================================================================
 # STEP 1: PRECOMPUTE TEAM-ROUND WIN MATRICES
 # (Reuses pattern from hodes_pathing.R:60-78)
 # ==============================================================================
@@ -47,7 +123,8 @@ precompute_team_wins <- function(sim) {
   team_round_wins <- vector("list", 6)
   team_round_probs <- matrix(0, nrow = n_teams, ncol = 6)
 
-  cat("Precomputing team-round win matrices...")
+  cat("Precomputing team-round win matrices...\n")
+  pg_tw <- make_progress(6, "Rounds", update_every = 1)
   for (rd in 1:6) {
     cols <- round_cols[[rd]]
     round_results <- ar[, cols, drop = FALSE]
@@ -60,8 +137,9 @@ precompute_team_wins <- function(sim) {
 
     team_round_wins[[rd]] <- win_mat
     team_round_probs[, rd] <- colMeans(win_mat)
+    pg_tw$tick()
   }
-  cat(" done.\n")
+  pg_tw$done()
 
   list(
     team_round_wins = team_round_wins,
@@ -277,6 +355,7 @@ compute_candidate_ev <- function(candidate_id, group, current_slot_id,
 
   # For each sampled sim, simulate field entries and compute payout
   payouts <- numeric(sim_sample_size)
+  pg <- make_progress(sim_sample_size, "Sims", update_every = 3)
 
   for (si in seq_along(sample_idx)) {
     sim_i <- sample_idx[si]
@@ -321,7 +400,10 @@ compute_candidate_ev <- function(candidate_id, group, current_slot_id,
         payouts[si] <- prize_pool / (scaled_same + 1)
       }
     }
+
+    pg$tick()
   }
+  pg$done()
 
   list(
     ev             = mean(payouts),
@@ -365,14 +447,25 @@ optimize_today <- function(state, candidates, current_slot_id, sim, tw,
   cat(sprintf("Candidates: %d teams | Alive entries: %d | Groups: %d\n",
               length(candidates), sum(state$alive), nrow(groups)))
 
+  # Count total evaluations needed (for progress)
+  total_evals <- 0L
+  for (gi in seq_len(nrow(groups))) {
+    g <- groups[gi]
+    n_avail <- sum(!candidate_ids %in% g$used_teams[[1]])
+    total_evals <- total_evals + n_avail
+  }
+  cat(sprintf("Total evaluations: %d groups x candidates = %d\n",
+              nrow(groups), total_evals))
+
   # Score each candidate for each group
-  # For now, compute EV for each (group, candidate) pair
   all_scores <- list()
+  eval_num <- 0L
+  overall_start <- proc.time()[["elapsed"]]
 
   for (gi in seq_len(nrow(groups))) {
     g <- groups[gi]
-    cat(sprintf("\nGroup %d: contest=%s, %d entries, %d field\n",
-                gi, g$contest_id, g$n_entries, g$contest_size))
+    cat(sprintf("\n--- Group %d/%d: contest=%s, %d entries, %d field ---\n",
+                gi, nrow(groups), g$contest_id, g$n_entries, g$contest_size))
 
     for (ci in seq_along(candidate_ids)) {
       cid <- candidate_ids[ci]
@@ -381,13 +474,30 @@ optimize_today <- function(state, candidates, current_slot_id, sim, tw,
       # Skip if this team is already used by this group
       if (cid %in% g$used_teams[[1]]) next
 
-      cat(sprintf("  Evaluating %s (id=%d)...", cname, cid))
+      eval_num <- eval_num + 1L
+      elapsed <- proc.time()[["elapsed"]] - overall_start
+      rate <- eval_num / max(elapsed, 0.001)
+      remaining_evals <- total_evals - eval_num
+      eta_secs <- remaining_evals / max(rate, 0.001)
+
+      if (eta_secs < 60) {
+        eta_str <- sprintf("%.0fs", eta_secs)
+      } else if (eta_secs < 3600) {
+        eta_str <- sprintf("%.1fm", eta_secs / 60)
+      } else {
+        eta_str <- sprintf("%.1fh", eta_secs / 3600)
+      }
+
+      cat(sprintf("  [%d/%d | ETA %s] %s (id=%d)...\n",
+                  eval_num, total_evals, eta_str, cname, cid))
+
       ev_result <- compute_candidate_ev(
         cid, g, current_slot_id, sim, tw, teams_dt,
         ownership_by_slot, sim_sample_size = sim_sample_size
       )
-      cat(sprintf(" EV=$%.2f, Surv=%.1f%%\n",
-                  ev_result$ev, 100 * ev_result$survival_prob))
+      cat(sprintf("    => EV=$%.2f, Surv=%.1f%%, WinContest=%.3f%%\n",
+                  ev_result$ev, 100 * ev_result$survival_prob,
+                  100 * ev_result$pct_survive))
 
       all_scores[[length(all_scores) + 1]] <- data.table(
         group_id      = g$group_id,
@@ -401,6 +511,17 @@ optimize_today <- function(state, candidates, current_slot_id, sim, tw,
       )
     }
   }
+
+  total_elapsed <- proc.time()[["elapsed"]] - overall_start
+  if (total_elapsed < 60) {
+    time_str <- sprintf("%.1fs", total_elapsed)
+  } else if (total_elapsed < 3600) {
+    time_str <- sprintf("%.1fm", total_elapsed / 60)
+  } else {
+    time_str <- sprintf("%.1fh", total_elapsed / 3600)
+  }
+  cat(sprintf("\n=== Scoring complete: %d evaluations in %s ===\n",
+              eval_num, time_str))
 
   scores <- rbindlist(all_scores)
 
@@ -563,6 +684,8 @@ print_allocation <- function(allocation, teams_dt) {
 #' @return List with: allocation, state, sim, tw
 run_optimizer <- function(sim_file, state_file = NULL, current_slot_id,
                            contests_df = NULL, sim_sample_size = 50000) {
+  pipeline_start <- proc.time()[["elapsed"]]
+
   # Load simulation results
   cat(sprintf("Loading sim results from %s...\n", basename(sim_file)))
   sim <- readRDS(sim_file)
@@ -600,10 +723,13 @@ run_optimizer <- function(sim_file, state_file = NULL, current_slot_id,
     so[idx:length(so)]
   })))
 
+  pg_own <- make_progress(length(all_future_slots), "Ownership", update_every = 1)
   for (sid in all_future_slots) {
     own <- estimate_ownership(sid, teams_dt, sim$all_results, sim$round_info)
     ownership_by_slot[[sid]] <- own
+    pg_own$tick()
   }
+  pg_own$done()
 
   # Print ownership for today's slot
   print_ownership(current_slot_id, ownership_by_slot[[current_slot_id]],
@@ -617,6 +743,17 @@ run_optimizer <- function(sim_file, state_file = NULL, current_slot_id,
 
   # Print recommendation
   print_allocation(allocation, teams_dt)
+
+  # Pipeline summary
+  pipeline_elapsed <- proc.time()[["elapsed"]] - pipeline_start
+  if (pipeline_elapsed < 60) {
+    pipe_str <- sprintf("%.1f seconds", pipeline_elapsed)
+  } else if (pipeline_elapsed < 3600) {
+    pipe_str <- sprintf("%.1f minutes", pipeline_elapsed / 60)
+  } else {
+    pipe_str <- sprintf("%.1f hours", pipeline_elapsed / 3600)
+  }
+  cat(sprintf("\n=== Pipeline complete in %s ===\n", pipe_str))
 
   invisible(list(
     allocation       = allocation,
