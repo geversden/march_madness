@@ -219,7 +219,7 @@ if (file.exists(cl_file)) {
 # RUN SIMULATIONS
 # ==============================================================================
 
-N_SIMS        <- 10000000
+N_SIMS        <- 2000000
 UPDATE_FACTOR <- 3.0    # max rating bump per win; actual boost = factor * (1 - win_prob)
 
 set.seed(42)  # for reproducibility
@@ -278,24 +278,10 @@ sim_output <- list(
   year          = YEAR
 )
 
-# Save as 2 Parquet files (split all_results) + small RDS (metadata)
-library(arrow)
-ar_df <- as.data.frame(results$all_results)
-colnames(ar_df) <- paste0("game_", 1:63)
-
-pq_file_1 <- file.path(script_dir, sprintf("sim_results_%d_part1.parquet", YEAR))
-pq_file_2 <- file.path(script_dir, sprintf("sim_results_%d_part2.parquet", YEAR))
-write_parquet(ar_df[, 1:32],  pq_file_1, compression = "zstd", compression_level = 9)
-write_parquet(ar_df[, 33:63], pq_file_2, compression = "zstd", compression_level = 9)
-
-meta_output <- sim_output
-meta_output$all_results <- NULL  # strip the big matrix
-rds_file <- file.path(script_dir, sprintf("sim_results_%d_meta.rds", YEAR))
-saveRDS(meta_output, rds_file)
-
-cat(sprintf("Results saved: %s + %s + %s  (%s sims x 63 games)\n\n",
-            basename(pq_file_1), basename(pq_file_2), basename(rds_file),
-            format(N_SIMS, big.mark = ",")))
+rds_file <- file.path(script_dir, sprintf("sim_results_%d.rds", YEAR))
+saveRDS(sim_output, rds_file)
+cat(sprintf("Full results saved to %s  (%s sims x 63 games)\n\n",
+            basename(rds_file), format(N_SIMS, big.mark = ",")))
 
 # ==============================================================================
 # DISPLAY: CHAMPIONSHIP PROBABILITIES

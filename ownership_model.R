@@ -359,20 +359,11 @@ load_closing_lines <- function(year, bracket_teams) {
 
 LOG_SCALE <- 0.0917
 
-sim_pq1  <- file.path(script_dir, sprintf("sim_results_%d_part1.parquet", target_year))
-sim_pq2  <- file.path(script_dir, sprintf("sim_results_%d_part2.parquet", target_year))
-sim_meta <- file.path(script_dir, sprintf("sim_results_%d_meta.rds", target_year))
-sim_rds  <- file.path(script_dir, sprintf("sim_results_%d.rds", target_year))
-if (file.exists(sim_pq1) && file.exists(sim_pq2) && file.exists(sim_meta)) {
-  cat("Loading sim results: parquet (2 parts) + meta\n")
-  library(arrow)
-  sim <- readRDS(sim_meta)
-  sim$all_results <- as.matrix(cbind(read_parquet(sim_pq1), read_parquet(sim_pq2)))
-} else if (file.exists(sim_rds)) {
-  cat(sprintf("Loading sim results: %s\n", basename(sim_rds)))
-  sim <- readRDS(sim_rds)
-}
-if (exists("sim")) {
+sim_file <- file.path(script_dir, sprintf("sim_results_%d.rds", target_year))
+if (file.exists(sim_file)) {
+  cat(sprintf("Loading sim results: %s\n", basename(sim_file)))
+  sim <- readRDS(sim_file)
+  has_sim <- TRUE
   ri <- sim$round_info
   trp <- matrix(0, nrow = nrow(sim$teams), ncol = 6)
   for (rd in 1:6) {
@@ -612,16 +603,8 @@ build_r1_features <- function(yr) {
   # Championship probability from simulator — the real "save" signal.
   # Teams with high champ_prob get saved for later rounds, suppressing R1 picks.
   # This replaces the old fv = AdjEM/max(AdjEM) which was a weak proxy.
-  sim_pq2_yr  <- file.path(script_dir, sprintf("sim_results_%d_part2.parquet", yr))
-  sim_meta_yr <- file.path(script_dir, sprintf("sim_results_%d_meta.rds", yr))
-  sim_rds_yr  <- file.path(script_dir, sprintf("sim_results_%d.rds", yr))
-  if (file.exists(sim_pq2_yr) && file.exists(sim_meta_yr)) {
-    sim_yr <- readRDS(sim_meta_yr)
-    # Only read game 63 (championship) column from part2 (games 33-63 → col 31)
-    champ_game <- as.integer(read_parquet(sim_pq2_yr, col_select = "game_63")[[1]])
-    champ_counts <- tabulate(champ_game, nbins = nrow(sim_yr$teams))
-    bt[, champ_prob := champ_counts[team_id] / sim_yr$n_sims]
-  } else if (file.exists(sim_rds_yr)) {
+  sim_rds_yr <- file.path(script_dir, sprintf("sim_results_%d.rds", yr))
+  if (file.exists(sim_rds_yr)) {
     sim_yr <- readRDS(sim_rds_yr)
     champ_game <- sim_yr$all_results[, 63]
     champ_counts <- tabulate(champ_game, nbins = nrow(sim_yr$teams))
