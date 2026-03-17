@@ -805,6 +805,9 @@ run_optimizer <- function(sim_file, state_file = NULL, current_slot_id,
   cat(sprintf("\nToday's candidates (%d teams): %s\n",
               length(candidates), paste(candidates, collapse = ", ")))
 
+  # Load calibrated ownership params (falls back to defaults if no calibration file)
+  own_params <- load_calibrated_params()
+
   # Estimate ownership for all slots (current + future)
   # Use ALL_SLOT_IDS superset so ownership covers both format A and B entries
   cat("\nEstimating ownership...\n")
@@ -818,7 +821,8 @@ run_optimizer <- function(sim_file, state_file = NULL, current_slot_id,
 
   pg_own <- make_progress(length(all_future_slots), "Ownership", update_every = 1)
   for (sid in all_future_slots) {
-    own <- estimate_ownership(sid, teams_dt, sim$all_results, sim$round_info)
+    own <- estimate_ownership(sid, teams_dt, sim$all_results, sim$round_info,
+                               params = own_params)
     ownership_by_slot[[sid]] <- own
     pg_own$tick()
   }

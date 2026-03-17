@@ -42,14 +42,14 @@ library(data.table)
 #' @return Named numeric vector: team_name -> ownership fraction.
 #'   Sums to n_picks for the slot.
 estimate_ownership <- function(slot_id, teams_dt, sim_matrix, round_info,
-                                prior_ownership = NULL, field_used_dist = NULL) {
+                                prior_ownership = NULL, field_used_dist = NULL,
+                                params = NULL) {
   slot <- get_slot(slot_id)
   game_idxs <- slot$game_indices
   n_picks <- slot$n_picks
   round_num <- slot$round_num
 
   # Identify teams playing in this slot
-  # For R64, we know the exact matchups from the bracket
   if (round_num == 1) {
     candidate_ids <- integer(0)
     for (g in game_idxs) {
@@ -59,8 +59,6 @@ estimate_ownership <- function(slot_id, teams_dt, sim_matrix, round_info,
     }
     candidates <- teams_dt[teams_dt$team_id %in% candidate_ids, ]
   } else {
-    # For later rounds, candidates are teams that won their prior game
-    # in at least some sims. Use sim data to identify them.
     candidates <- get_round_candidates(game_idxs, teams_dt, sim_matrix)
   }
 
@@ -69,22 +67,14 @@ estimate_ownership <- function(slot_id, teams_dt, sim_matrix, round_info,
     return(numeric(0))
   }
 
-  # --- Factor 1: Win probability in this round's game ---
+  # --- Factor 1: Win probability ---
   wp <- compute_slot_win_probs(candidates, game_idxs, round_num,
                                 teams_dt, sim_matrix)
 
   # --- Factor 2: Future value (save effect) ---
-  # Teams with high championship equity get saved for later rounds
-  # Stronger effect in early rounds, weaker later
   fv <- compute_future_value(candidates, sim_matrix, round_num)
 
-  # Save strength: how much future value suppresses current picks
-  # With 1 pick per day (vs 3 in Hodes), save effect is even stronger
-  # because you have fewer "slots" to use a team
-  save_strength <- c(0.60, 0.50, 0.35, 0.15, 0.0, 0.0)[round_num]
-
   # --- Factor 3: Availability ---
-  # Estimate what fraction of the field has already used each candidate
   avail <- rep(1.0, nrow(candidates))
   if (!is.null(field_used_dist)) {
     for (i in seq_len(nrow(candidates))) {
@@ -95,16 +85,23 @@ estimate_ownership <- function(slot_id, teams_dt, sim_matrix, round_info,
     }
   }
 
+  # --- Get parameters (calibrated or defaults) ---
+  round_to_group <- c("R1", "R2", "S16", "E8plus", "E8plus", "E8plus")
+  rg <- round_to_group[round_num]
+
+  if (!is.null(params) && !is.null(params$beta_wp)) {
+    beta_wp <- params$beta_wp[rg]
+    save_strength <- params$save_strengths[round_num]
+    beta_avail <- if (!is.null(params$beta_avail)) params$beta_avail else 1.0
+  } else {
+    beta_wp <- 4.0
+    save_strength <- c(0.60, 0.50, 0.35, 0.15, 0.0, 0.0)[round_num]
+    beta_avail <- 1.0
+  }
+
   # --- Combine into attractiveness score ---
-  # Softmax over: log(attract) = β_wp * wp - save_strength * fv + log(avail)
-  # No seed tiebreaker boost (Splash has no seed-sum TB)
-
-  # Concentration parameter: with only 1 pick, people concentrate more on chalk
-  # Higher beta = more concentrated on high-wp teams
-  beta_wp <- 4.0  # starting estimate; calibrate when Splash data arrives
-
-  log_attract <- beta_wp * wp - save_strength * fv + log(avail)
-  log_attract <- log_attract - max(log_attract)  # numerical stability
+  log_attract <- beta_wp * wp - save_strength * fv + beta_avail * log(avail)
+  log_attract <- log_attract - max(log_attract)
 
   raw_shares <- exp(log_attract)
   ownership <- n_picks * raw_shares / sum(raw_shares)
@@ -671,59 +668,389 @@ print_ownership_comparison <- function(empirical_own, predicted_own, slot_id, ye
 }
 
 # ==============================================================================
+# NAME RESOLUTION: SPLASH PICKS ↔ SIM TEAMS
+# ==============================================================================
+
+#' Resolve Splash pick names to sim team names
+#'
+#' Splash API uses team_name ("McNeese", "St. John's") and team_alias ("MCNS", "SJU").
+#' Sim teams use full names from KenPom ("McNeese State", "St. John's").
+#' This builds a lookup table by trying: exact match, substring match, manual overrides.
+#'
+#' @param splash_names Character vector of unique Splash team_name values
+#' @param sim_teams Data frame with name, seed, region, team_id columns
+#' @return Named character vector: splash_name -> sim_name (NA if unmatched)
+resolve_splash_to_sim <- function(splash_names, sim_teams) {
+  sim_names <- sim_teams$name
+
+  # Manual overrides for known mismatches
+  overrides <- c(
+    "McNeese"          = "McNeese State",
+    "NC State"         = "NC State",
+    "South Carolina"   = "South Carolina",
+    "Mississippi State" = "Mississippi State",
+    "Michigan State"   = "Michigan State",
+    "Iowa State"       = "Iowa State",
+    "Colorado State"   = "Colorado State",
+    "Utah State"       = "Utah State",
+    "Washington State" = "Washington State",
+    "Saint Mary's"     = "Saint Mary's",
+    "St. John's"       = "St. John's",
+    "SIU Edwardsville" = "SIU Edwardsville",
+    "UNC Wilmington"   = "UNC Wilmington",
+    "UC San Diego"     = "UC San Diego",
+    "High Point"       = "High Point",
+    "Grand Canyon"     = "Grand Canyon",
+    "Mount St. Mary's" = "Mount St. Mary's",
+    "Morehead State"   = "Morehead State"
+  )
+
+  result <- setNames(rep(NA_character_, length(splash_names)), splash_names)
+
+  for (sn in splash_names) {
+    # 1. Check manual overrides
+    if (sn %in% names(overrides) && overrides[sn] %in% sim_names) {
+      result[sn] <- overrides[sn]
+      next
+    }
+    # 2. Exact match
+    if (sn %in% sim_names) {
+      result[sn] <- sn
+      next
+    }
+    # 3. Splash name is prefix of sim name (e.g., "McNeese" -> "McNeese State")
+    prefix_match <- sim_names[startsWith(sim_names, sn)]
+    if (length(prefix_match) == 1) {
+      result[sn] <- prefix_match
+      next
+    }
+    # 4. Sim name is prefix of splash name
+    suffix_match <- sim_names[sapply(sim_names, function(x) startsWith(sn, x))]
+    if (length(suffix_match) == 1) {
+      result[sn] <- suffix_match
+      next
+    }
+    # 5. Case-insensitive match
+    ci_match <- sim_names[tolower(sim_names) == tolower(sn)]
+    if (length(ci_match) == 1) {
+      result[sn] <- ci_match
+      next
+    }
+  }
+
+  n_matched <- sum(!is.na(result))
+  n_total <- length(splash_names)
+  if (n_matched < n_total) {
+    unmatched <- splash_names[is.na(result)]
+    cat(sprintf("  Name resolution: %d/%d matched, unmatched: %s\n",
+                n_matched, n_total, paste(unmatched, collapse = ", ")))
+  }
+
+  result
+}
+
+# ==============================================================================
+# CALIBRATION DATASET BUILDER
+# ==============================================================================
+
+#' Build calibration dataset: join picks with sim-derived features per year
+#'
+#' For each year and slot, computes team-level features (win_prob, future_value,
+#' seed, region, availability) and joins with empirical ownership from pick data.
+#'
+#' @param picks_dt data.table from load_splash_results()
+#' @param sim_list Named list: year -> sim object (e.g., list("2024" = sim24, "2025" = sim25))
+#' @param format Format code (default "A")
+#' @return data.table with one row per team-slot-year
+build_calibration_dataset <- function(picks_dt, sim_list, format = "A") {
+  cat("Building calibration dataset...\n")
+
+  slot_order <- get_slot_order(format)
+  emp_own <- compute_empirical_ownership(picks_dt)
+
+  all_rows <- list()
+
+  for (yr_str in names(sim_list)) {
+    yr <- as.integer(yr_str)
+    sim <- sim_list[[yr_str]]
+    sim_teams <- sim$teams
+
+    cat(sprintf("\n  Processing %d (%d teams)...\n", yr, nrow(sim_teams)))
+
+    # Build name mapping for this year
+    yr_picks <- picks_dt[year == yr]
+    splash_names <- unique(yr_picks$team_name)
+    splash_names <- splash_names[!is.na(splash_names)]
+    name_map <- resolve_splash_to_sim(splash_names, sim_teams)
+
+    # Track cumulative field usage across slots (from empirical picks)
+    field_used <- setNames(rep(0, nrow(sim_teams)), sim_teams$name)
+
+    for (sid in slot_order) {
+      slot <- tryCatch(get_slot(sid), error = function(e) NULL)
+      if (is.null(slot)) next
+
+      round_num <- slot$round_num
+      game_idxs <- slot$game_indices
+
+      # Get candidate teams from sim
+      if (round_num == 1) {
+        cids <- integer(0)
+        for (g in game_idxs) {
+          cids <- c(cids, sim_teams$team_id[2 * g - 1], sim_teams$team_id[2 * g])
+        }
+        candidates <- sim_teams[sim_teams$team_id %in% unique(cids), ]
+      } else {
+        candidates <- get_round_candidates(game_idxs, sim_teams, sim$all_results)
+      }
+      if (nrow(candidates) == 0) next
+
+      # Compute features from sim
+      wp <- compute_slot_win_probs(candidates, game_idxs, round_num,
+                                    sim_teams, sim$all_results)
+      fv <- compute_future_value(candidates, sim$all_results, round_num)
+
+      # Availability: 1 - cumulative field usage
+      avail <- sapply(candidates$name, function(nm) {
+        max(1.0 - field_used[nm], 0.05)
+      })
+
+      # Get empirical ownership for this slot-year
+      emp_slot <- emp_own[year == yr & slot_id == sid]
+
+      # Build rows for each candidate
+      for (i in seq_len(nrow(candidates))) {
+        sim_name <- candidates$name[i]
+
+        # Find matching splash name
+        splash_match <- names(name_map)[name_map == sim_name & !is.na(name_map)]
+
+        # Look up empirical ownership
+        emp_pct <- 0
+        n_picks_i <- 0
+        if (length(splash_match) > 0) {
+          for (sm in splash_match) {
+            emp_row <- emp_slot[team_name == sm]
+            if (nrow(emp_row) > 0) {
+              emp_pct <- emp_row$ownership_pct[1]
+              n_picks_i <- emp_row$n_picks[1]
+              break
+            }
+          }
+        }
+
+        all_rows[[length(all_rows) + 1]] <- data.table(
+          year         = yr,
+          slot_id      = sid,
+          round_num    = round_num,
+          sim_name     = sim_name,
+          team_id      = candidates$team_id[i],
+          seed         = candidates$seed[i],
+          region       = candidates$region[i],
+          wp           = wp[i],
+          fv           = fv[i],
+          avail        = avail[i],
+          field_used   = field_used[sim_name],
+          empirical_own = emp_pct,
+          n_picks      = n_picks_i
+        )
+      }
+
+      # Update cumulative field usage from empirical ownership
+      for (j in seq_len(nrow(emp_slot))) {
+        splash_nm <- emp_slot$team_name[j]
+        sim_nm <- name_map[splash_nm]
+        if (!is.na(sim_nm) && sim_nm %in% names(field_used)) {
+          field_used[sim_nm] <- min(field_used[sim_nm] + emp_slot$ownership_pct[j], 1.0)
+        }
+      }
+    }
+  }
+
+  calib_dt <- rbindlist(all_rows)
+  cat(sprintf("\nCalibration dataset: %d rows (%d team-slot-year observations)\n",
+              nrow(calib_dt), sum(calib_dt$n_picks > 0)))
+  calib_dt
+}
+
+# ==============================================================================
 # BEHAVIORAL ANALYSIS FROM PICK HISTORIES
 # ==============================================================================
 
 #' Analyze field behavior from full pick histories
 #'
-#' Computes key behavioral metrics that inform the ownership model:
-#' 1. Pick-vs-win-prob curve: how strongly does the field chase chalk?
-#' 2. Save effect: do people avoid high-FV teams in early rounds?
-#' 3. Anti-self behavior: how often do entries pick against their own future bracket?
+#' Runs 5 behavioral analyses on the calibration dataset:
+#' 1. Win-prob → ownership curve per round (chalk sensitivity)
+#' 2. Save effect quantification (future value discount)
+#' 3. Availability effect (prior usage suppression)
+#' 4. Regional diversification / picking-against-self
+#' 5. Seed-based behavior (residual seed preference)
 #'
-#' @param picks_dt data.table from parse_splash_results()
-#' @param teams_dt Teams data frame (with name/seed for matching)
-#' @param sim Sim list (for computing win probs + future values per year)
-#' @return List with behavioral metrics and fitted params
-analyze_field_behavior <- function(picks_dt, teams_dt, sim = NULL) {
-  cat("Analyzing field behavior from pick histories...\n")
+#' @param picks_dt data.table from load_splash_results()
+#' @param calib_dt data.table from build_calibration_dataset() (NULL to skip sim-based analyses)
+#' @return List with behavioral metrics
+analyze_field_behavior <- function(picks_dt, calib_dt = NULL) {
+  cat("\n========================================\n")
+  cat("FIELD BEHAVIOR ANALYSIS\n")
+  cat("========================================\n")
   results <- list()
 
-  # --- 1. Pick concentration by seed ---
-  # How much do people favor favorites?
-  if ("team_alias" %in% names(picks_dt)) {
-    # Match picks to teams_dt by alias
-    pick_seeds <- merge(
-      picks_dt, teams_dt[, .(name, seed)],
-      by.x = "team_name", by.y = "name", all.x = TRUE
-    )
-  }
+  # --- 1. Win-prob → ownership curve per round ---
+  if (!is.null(calib_dt)) {
+    cat("\n--- 1. Win-Prob → Ownership (Chalk Sensitivity) ---\n")
+    picked <- calib_dt[n_picks > 0]  # only teams that were actually picked
 
-  if ("seed" %in% names(pick_seeds)) {
-    seed_own <- pick_seeds[, .N, by = .(slot_id, seed, year)]
-    slot_totals <- pick_seeds[, .(total = .N), by = .(slot_id, year)]
-    seed_own <- merge(seed_own, slot_totals, by = c("slot_id", "year"))
-    seed_own[, pct := N / total]
+    for (rnd in sort(unique(picked$round_num))) {
+      rnd_data <- picked[round_num == rnd & wp > 0 & empirical_own > 0]
+      if (nrow(rnd_data) < 3) next
 
-    # For R64 slots, seeds 1-4 should dominate
-    r1_seeds <- seed_own[slot_id %in% c("R1_d1", "R1_d2")]
-    if (nrow(r1_seeds) > 0) {
-      chalk_rate <- r1_seeds[seed <= 4, sum(N)] / r1_seeds[, sum(N)]
-      results$r1_chalk_rate <- chalk_rate
-      cat(sprintf("  R64 chalk rate (seeds 1-4): %.1f%%\n", 100 * chalk_rate))
+      # Fit log(own) ~ wp to get chalk sensitivity
+      fit <- tryCatch(lm(log(empirical_own) ~ wp, data = rnd_data), error = function(e) NULL)
+      if (!is.null(fit)) {
+        beta <- coef(fit)[2]
+        r2 <- summary(fit)$r.squared
+        rnd_label <- c("R64", "R32", "S16", "E8", "FF", "CHAMP")[rnd]
+        results[[paste0("beta_wp_round_", rnd)]] <- beta
+        cat(sprintf("  %s: beta_wp ≈ %.2f (R² = %.3f, n = %d)\n",
+                    rnd_label, beta, r2, nrow(rnd_data)))
+      }
     }
   }
 
-  # --- 2. Pick transition analysis ---
-  # How do entries' picks evolve across rounds?
-  # Convert to wide format: one row per entry, one column per slot
+  # --- 2. Save effect quantification ---
+  if (!is.null(calib_dt)) {
+    cat("\n--- 2. Save Effect (Future Value Discount) ---\n")
+    early <- calib_dt[round_num <= 2 & wp > 0 & empirical_own > 0]
+
+    if (nrow(early) >= 5) {
+      # Residual after controlling for wp
+      fit_wp <- lm(log(empirical_own) ~ wp, data = early)
+      early[, own_resid := residuals(fit_wp)]
+
+      fit_save <- lm(own_resid ~ fv, data = early)
+      save_coef <- coef(fit_save)[2]
+      results$save_effect_coef <- save_coef
+      cat(sprintf("  FV coefficient in R64/R32: %.3f (negative = save effect confirmed)\n",
+                  save_coef))
+
+      # Show 1-seeds specifically
+      seeds_1 <- early[seed == 1]
+      if (nrow(seeds_1) > 0) {
+        cat("  1-seed ownership in early rounds:\n")
+        for (i in seq_len(nrow(seeds_1))) {
+          r <- seeds_1[i]
+          cat(sprintf("    %d %s %-20s: wp=%.1f%%, own=%.1f%%, fv=%.3f\n",
+                      r$year, r$slot_id, r$sim_name,
+                      100 * r$wp, 100 * r$empirical_own, r$fv))
+        }
+      }
+    }
+  }
+
+  # --- 3. Availability effect ---
+  if (!is.null(calib_dt)) {
+    cat("\n--- 3. Availability Effect ---\n")
+    # Only slots where some teams have nonzero field_used
+    avail_data <- calib_dt[field_used > 0.01 & wp > 0 & empirical_own > 0]
+
+    if (nrow(avail_data) >= 5) {
+      fit_avail <- lm(log(empirical_own) ~ wp + fv + log(avail),
+                       data = avail_data)
+      avail_coef <- coef(fit_avail)["log(avail)"]
+      results$avail_effect_coef <- avail_coef
+      cat(sprintf("  Availability coef (controlling for wp, fv): %.3f\n", avail_coef))
+      cat(sprintf("  (positive = higher availability → more picks, n = %d)\n",
+                  nrow(avail_data)))
+    } else {
+      cat("  Insufficient data with nonzero field_used for regression\n")
+    }
+  }
+
+  # --- 4. Regional diversification / picking-against-self ---
+  cat("\n--- 4. Regional Diversification ---\n")
+  if (!is.null(calib_dt)) {
+    # Merge region info into picks
+    name_to_region <- setNames(calib_dt$region, calib_dt$sim_name)
+    name_to_region <- name_to_region[!duplicated(names(name_to_region))]
+  }
+
+  # Use picks data directly — track regions per entry
+  slot_order_a <- c("R1_d1", "R1_d2", "R2_d1", "R2_d2",
+                     "S16_d1", "S16_d2", "E8", "FF", "CHAMP")
+
   entry_wide <- dcast(picks_dt, entry_id + year ~ slot_id,
-                       value.var = "team_alias", fun.aggregate = function(x) x[1])
+                       value.var = "team_name", fun.aggregate = function(x) x[1])
 
-  results$n_entries_by_year <- picks_dt[, uniqueN(entry_id), by = year]
+  early_slots <- c("R1_d1", "R1_d2", "R2_d1", "R2_d2")
+  available_early <- intersect(early_slots, names(entry_wide))
 
-  # --- 3. Reuse analysis ---
-  # This shouldn't happen (rules forbid it) but good to verify
+  if (length(available_early) >= 2 && !is.null(calib_dt)) {
+    # For each entry, count distinct regions in early rounds
+    region_counts <- sapply(seq_len(nrow(entry_wide)), function(i) {
+      picks <- unlist(entry_wide[i, ..available_early])
+      picks <- picks[!is.na(picks)]
+      # Map splash names to sim names, then to regions
+      regions <- character(0)
+      for (p in picks) {
+        # Try direct region lookup
+        if (p %in% names(name_to_region)) {
+          regions <- c(regions, name_to_region[p])
+        }
+      }
+      length(unique(regions))
+    })
+
+    valid <- region_counts > 0
+    if (sum(valid) > 0) {
+      mean_regions <- mean(region_counts[valid])
+      results$mean_distinct_regions_early <- mean_regions
+      cat(sprintf("  Mean distinct regions in R1+R2: %.2f (max possible: %d)\n",
+                  mean_regions, length(available_early)))
+
+      # Distribution
+      tbl <- table(region_counts[valid])
+      for (n in sort(as.integer(names(tbl)))) {
+        cat(sprintf("    %d regions: %d entries (%.1f%%)\n",
+                    n, tbl[as.character(n)],
+                    100 * tbl[as.character(n)] / sum(valid)))
+      }
+    }
+  }
+
+  # --- 5. Seed-based behavior ---
+  if (!is.null(calib_dt)) {
+    cat("\n--- 5. Seed Effect (Residual After wp) ---\n")
+    r1_data <- calib_dt[round_num == 1 & wp > 0 & empirical_own > 0]
+
+    if (nrow(r1_data) >= 5) {
+      # Fit ownership with both wp and seed
+      fit_full <- lm(log(empirical_own) ~ wp + seed, data = r1_data)
+      seed_coef <- coef(fit_full)["seed"]
+      results$seed_coef_r1 <- seed_coef
+      cat(sprintf("  R64 seed coefficient (controlling for wp): %.3f\n", seed_coef))
+      cat("  (negative = higher seeds get less ownership beyond what wp explains)\n")
+
+      # Seed group analysis
+      r1_data[, seed_group := ifelse(seed <= 4, "1-4",
+                               ifelse(seed <= 8, "5-8",
+                               ifelse(seed <= 12, "9-12", "13-16")))]
+      seed_summary <- r1_data[, .(
+        mean_wp = mean(wp),
+        mean_own = mean(empirical_own),
+        ratio = mean(empirical_own) / mean(wp)
+      ), by = seed_group]
+      setorder(seed_summary, seed_group)
+      cat("  Ownership/WinProb ratio by seed group (>1 = over-picked):\n")
+      for (i in seq_len(nrow(seed_summary))) {
+        r <- seed_summary[i]
+        cat(sprintf("    Seeds %5s: wp=%.3f, own=%.3f, ratio=%.2f\n",
+                    r$seed_group, r$mean_wp, r$mean_own, r$ratio))
+      }
+    }
+  }
+
+  # --- Reuse and elimination checks ---
+  cat("\n--- Data Quality Checks ---\n")
   reuse_check <- picks_dt[, .(n_uses = .N), by = .(entry_id, year, team_alias)]
   n_reuse <- sum(reuse_check$n_uses > 1)
   if (n_reuse > 0) {
@@ -732,13 +1059,9 @@ analyze_field_behavior <- function(picks_dt, teams_dt, sim = NULL) {
     cat("  No team reuse detected (good)\n")
   }
 
-  # --- 4. Elimination curve ---
-  # What fraction of entries are alive after each slot?
+  # Elimination curve
   if ("won" %in% names(picks_dt)) {
-    slot_order_a <- c("R1_d1", "R1_d2", "R2_d1", "R2_d2",
-                       "S16_d1", "S16_d2", "E8", "FF", "CHAMP")
-
-    for (yr in unique(picks_dt$year)) {
+    for (yr in sort(unique(picks_dt$year))) {
       yr_picks <- picks_dt[year == yr]
       total <- uniqueN(yr_picks$entry_id)
       cat(sprintf("  %d elimination curve (%d entries):\n", yr, total))
@@ -746,10 +1069,7 @@ analyze_field_behavior <- function(picks_dt, teams_dt, sim = NULL) {
       alive_ids <- unique(yr_picks$entry_id)
       for (sid in slot_order_a) {
         slot_picks <- yr_picks[slot_id == sid & entry_id %in% alive_ids]
-        if (nrow(slot_picks) == 0) {
-          cat(sprintf("    %-8s: no picks (all eliminated)\n", sid))
-          break
-        }
+        if (nrow(slot_picks) == 0) break
         n_alive_before <- length(alive_ids)
         died <- slot_picks[won == FALSE, unique(entry_id)]
         alive_ids <- setdiff(alive_ids, died)
@@ -761,95 +1081,263 @@ analyze_field_behavior <- function(picks_dt, teams_dt, sim = NULL) {
     }
   }
 
+  cat("\n========================================\n")
   results
 }
 
-#' Calibrate ownership model from full pick histories
-#'
-#' Fits beta_wp and save_strength parameters by minimizing MSE between
-#' predicted and empirical ownership across all slots and years.
-#'
-#' @param picks_dt data.table from parse_splash_results()
-#' @param teams_dt Teams data frame
-#' @param sim_matrix Sim results matrix
-#' @param round_info Round info from sim output
-#' @return Named list of fitted parameters: beta_wp, save_strengths, loss
-calibrate_from_picks <- function(picks_dt, teams_dt, sim_matrix, round_info) {
-  cat("Calibrating ownership model from pick histories...\n")
+# ==============================================================================
+# OWNERSHIP MODEL FITTING (MLE CALIBRATION)
+# ==============================================================================
 
-  # Compute empirical ownership
-  emp_own <- compute_empirical_ownership(picks_dt)
+#' Fit ownership model parameters via maximum likelihood
+#'
+#' Model: log_attract = beta_wp[r] * wp - save[r] * fv + beta_avail * log(avail)
+#' Predicted ownership = softmax(log_attract) within each slot.
+#' Loss = multinomial negative log-likelihood across all slot-year combos.
+#'
+#' @param calib_dt data.table from build_calibration_dataset()
+#' @param n_restarts Number of random restarts (default 5)
+#' @return List with fitted params, loss, convergence info
+fit_ownership_model <- function(calib_dt, n_restarts = 5) {
+  cat("\nFitting ownership model via MLE...\n")
 
-  # Get unique slots to fit against
-  slots_to_fit <- unique(emp_own$slot_id)
-  cat(sprintf("  Fitting against %d slots\n", length(slots_to_fit)))
+  # Only use observations where team was actually a candidate
+  # (wp > 0 means team could appear in this slot)
+  dt <- calib_dt[wp > 0]
+
+  # Unique slot-year combos
+  slot_years <- unique(dt[, .(year, slot_id, round_num)])
+  cat(sprintf("  Fitting against %d slot-year combinations\n", nrow(slot_years)))
+
+  # Round groupings: R1(1), R2(2), S16(3), E8+(4,5,6)
+  round_to_group <- c(1, 2, 3, 4, 4, 4)
+
+  # Parameter layout: [beta_wp_R1, beta_wp_R2, beta_wp_S16, beta_wp_E8+,
+  #                     save_R1, save_R2, save_S16,
+  #                     beta_avail]
+  n_par <- 8
 
   loss_fn <- function(par) {
-    beta_wp <- par[1]
-    save_str <- c(par[2], par[3], par[4], par[5], 0, 0)
+    beta_wp <- par[1:4]   # per round group
+    save_str <- c(par[5], par[6], par[7], 0, 0, 0)  # per round (E8+ = 0)
+    beta_avail <- par[8]
 
-    total_err <- 0
-    n_obs <- 0
+    total_nll <- 0
 
-    for (sid in slots_to_fit) {
-      slot <- tryCatch(get_slot(sid), error = function(e) NULL)
-      if (is.null(slot)) next
+    for (i in seq_len(nrow(slot_years))) {
+      sy <- slot_years[i]
+      sub <- dt[year == sy$year & slot_id == sy$slot_id]
+      if (nrow(sub) == 0) next
 
-      round_num <- slot$round_num
-      game_idxs <- slot$game_indices
+      rnd <- sy$round_num
+      rg <- round_to_group[rnd]
 
-      # Get candidates
-      candidates <- if (round_num == 1) {
-        cids <- integer(0)
-        for (g in game_idxs) cids <- c(cids, teams_dt$team_id[2*g-1], teams_dt$team_id[2*g])
-        teams_dt[teams_dt$team_id %in% unique(cids), ]
-      } else {
-        get_round_candidates(game_idxs, teams_dt, sim_matrix)
-      }
-      if (nrow(candidates) == 0) next
-
-      # Predicted ownership with trial params
-      wp <- compute_slot_win_probs(candidates, game_idxs, round_num, teams_dt, sim_matrix)
-      fv <- compute_future_value(candidates, sim_matrix, round_num)
-
-      log_attract <- beta_wp * wp - save_str[round_num] * fv
+      log_attract <- beta_wp[rg] * sub$wp -
+                     save_str[rnd] * sub$fv +
+                     beta_avail * log(sub$avail)
       log_attract <- log_attract - max(log_attract)
-      pred <- exp(log_attract) / sum(exp(log_attract))
-      names(pred) <- candidates$name
 
-      # Compare against empirical (average across years)
-      emp_slot <- emp_own[slot_id == sid, .(pct = mean(ownership_pct)), by = team_name]
+      log_pred <- log_attract - log(sum(exp(log_attract)))
 
-      # Match by name
-      for (j in seq_len(nrow(emp_slot))) {
-        tm <- emp_slot$team_name[j]
-        actual_pct <- emp_slot$pct[j]
-        pred_pct <- if (tm %in% names(pred)) pred[tm] else 0
-        total_err <- total_err + (pred_pct - actual_pct)^2
-        n_obs <- n_obs + 1
-      }
+      # Total picks in this slot-year
+      total_picks <- sum(sub$n_picks)
+      if (total_picks == 0) next
+
+      # NLL contribution: -sum(n_picks_i * log(pred_i))
+      # Add small epsilon to avoid log(0)
+      nll <- -sum(sub$n_picks * pmax(log_pred, -30))
+      total_nll <- total_nll + nll
     }
 
-    if (n_obs == 0) return(1e6)
-    total_err / n_obs
+    total_nll
   }
 
-  fit <- optim(c(4.0, 0.6, 0.5, 0.35, 0.15), loss_fn,
-               method = "Nelder-Mead", control = list(maxit = 5000))
+  # Box constraints
+  lower <- c(rep(0.5, 4), rep(0.0, 3), 0.0)
+  upper <- c(rep(15.0, 4), rep(3.0, 3), 5.0)
 
+  best_fit <- NULL
+  best_val <- Inf
+
+  for (restart in seq_len(n_restarts)) {
+    if (restart == 1) {
+      # First restart: use reasonable initial values
+      init <- c(4.0, 4.0, 4.0, 4.0, 0.6, 0.5, 0.35, 1.0)
+    } else {
+      # Random restarts
+      init <- runif(n_par, lower, upper)
+    }
+
+    fit <- tryCatch(
+      optim(init, loss_fn, method = "L-BFGS-B",
+            lower = lower, upper = upper,
+            control = list(maxit = 5000)),
+      error = function(e) NULL
+    )
+
+    if (!is.null(fit) && fit$value < best_val) {
+      best_val <- fit$value
+      best_fit <- fit
+    }
+  }
+
+  if (is.null(best_fit)) {
+    stop("All optimization restarts failed")
+  }
+
+  par <- best_fit$par
   result <- list(
-    beta_wp = fit$par[1],
-    save_strengths = c(fit$par[2], fit$par[3], fit$par[4], fit$par[5], 0, 0),
-    loss = fit$value,
-    converged = fit$convergence == 0
+    beta_wp = setNames(par[1:4], c("R1", "R2", "S16", "E8plus")),
+    save_strengths = c(par[5], par[6], par[7], 0, 0, 0),
+    beta_avail = par[8],
+    nll = best_fit$value,
+    converged = best_fit$convergence == 0
   )
 
-  cat(sprintf("  Fitted: beta_wp=%.3f, save=[%.3f, %.3f, %.3f, %.3f]\n",
-              result$beta_wp, result$save_strengths[1], result$save_strengths[2],
-              result$save_strengths[3], result$save_strengths[4]))
-  cat(sprintf("  MSE: %.8f  (converged: %s)\n", result$loss, result$converged))
+  cat(sprintf("  beta_wp:    R1=%.2f  R2=%.2f  S16=%.2f  E8+=%.2f\n",
+              result$beta_wp[1], result$beta_wp[2],
+              result$beta_wp[3], result$beta_wp[4]))
+  cat(sprintf("  save:       R1=%.3f  R2=%.3f  S16=%.3f\n",
+              result$save_strengths[1], result$save_strengths[2],
+              result$save_strengths[3]))
+  cat(sprintf("  beta_avail: %.3f\n", result$beta_avail))
+  cat(sprintf("  NLL: %.1f  (converged: %s)\n", result$nll, result$converged))
 
   result
+}
+
+#' Cross-validate ownership model (leave-one-year-out)
+#'
+#' @param calib_dt data.table from build_calibration_dataset()
+#' @return List with per-year held-out metrics
+cross_validate_ownership <- function(calib_dt) {
+  cat("\nCross-validating ownership model...\n")
+  years <- sort(unique(calib_dt$year))
+  cv_results <- list()
+
+  for (held_out in years) {
+    train_dt <- calib_dt[year != held_out]
+    test_dt <- calib_dt[year == held_out]
+
+    cat(sprintf("\n  Hold out %d, train on %s:\n",
+                held_out, paste(setdiff(years, held_out), collapse = ", ")))
+
+    fit <- tryCatch(
+      fit_ownership_model(train_dt, n_restarts = 3),
+      error = function(e) { cat("    FAILED:", e$message, "\n"); NULL }
+    )
+    if (is.null(fit)) next
+
+    # Predict on held-out year
+    round_to_group <- c(1, 2, 3, 4, 4, 4)
+    test_slots <- unique(test_dt[, .(slot_id, round_num)])
+    total_mae <- 0
+    n_obs <- 0
+
+    for (i in seq_len(nrow(test_slots))) {
+      ts <- test_slots[i]
+      sub <- test_dt[slot_id == ts$slot_id & wp > 0]
+      if (nrow(sub) == 0) next
+
+      rnd <- ts$round_num
+      rg <- round_to_group[rnd]
+      save_str <- c(fit$save_strengths[1:3], 0, 0, 0)
+
+      log_attract <- fit$beta_wp[rg] * sub$wp -
+                     save_str[rnd] * sub$fv +
+                     fit$beta_avail * log(sub$avail)
+      log_attract <- log_attract - max(log_attract)
+      pred <- exp(log_attract) / sum(exp(log_attract))
+
+      mae <- mean(abs(pred - sub$empirical_own))
+      total_mae <- total_mae + mae * nrow(sub)
+      n_obs <- n_obs + nrow(sub)
+    }
+
+    avg_mae <- if (n_obs > 0) total_mae / n_obs else NA
+    cat(sprintf("    Held-out MAE: %.4f (%.1f pp avg error)\n",
+                avg_mae, 100 * avg_mae))
+    cv_results[[as.character(held_out)]] <- list(fit = fit, mae = avg_mae)
+  }
+
+  cv_results
+}
+
+# ==============================================================================
+# CALIBRATION PIPELINE (MAIN ENTRY POINT)
+# ==============================================================================
+
+#' Calibrate ownership model from pick histories and per-year sims
+#'
+#' @param pick_files Named list: year -> file path (e.g., list("2024" = "results_2024.rds"))
+#' @param sim_files Named list: year -> file path (e.g., list("2024" = "sim_results_2024.rds"))
+#' @param output_file File path to save calibrated params (default "splash_calibration.rds")
+#' @param cross_validate Run leave-one-year-out CV (default TRUE)
+#' @return List with: params, calib_dt, analyses, cv_results
+calibrate_from_picks <- function(pick_files, sim_files,
+                                  output_file = "splash_calibration.rds",
+                                  cross_validate = TRUE) {
+  cat("=== SPLASH OWNERSHIP CALIBRATION ===\n")
+
+  # 1. Load picks
+  picks_dt <- load_splash_results(pick_files)
+
+  # 2. Load sims
+  cat("\nLoading sim results...\n")
+  sim_list <- list()
+  for (yr in names(sim_files)) {
+    cat(sprintf("  Loading %s sims...\n", yr))
+    sim_list[[yr]] <- readRDS(sim_files[[yr]])
+    cat(sprintf("    %d sims, %d teams\n",
+                sim_list[[yr]]$n_sims, nrow(sim_list[[yr]]$teams)))
+  }
+
+  # 3. Build calibration dataset
+  calib_dt <- build_calibration_dataset(picks_dt, sim_list)
+
+  # 4. Run behavioral analyses
+  analyses <- analyze_field_behavior(picks_dt, calib_dt)
+
+  # 5. Fit model
+  params <- fit_ownership_model(calib_dt)
+
+  # 6. Cross-validate
+  cv_results <- NULL
+  if (cross_validate && length(sim_list) > 1) {
+    cv_results <- cross_validate_ownership(calib_dt)
+  }
+
+  # 7. Save
+  save_calibrated_params(params, output_file)
+
+  list(
+    params = params,
+    calib_dt = calib_dt,
+    analyses = analyses,
+    cv_results = cv_results
+  )
+}
+
+#' Save calibrated parameters to file
+save_calibrated_params <- function(params, file = "splash_calibration.rds") {
+  saveRDS(params, file)
+  cat(sprintf("\nCalibrated params saved to: %s\n", file))
+}
+
+#' Load calibrated parameters from file (falls back to defaults if missing)
+load_calibrated_params <- function(file = "splash_calibration.rds") {
+  if (file.exists(file)) {
+    params <- readRDS(file)
+    cat(sprintf("Loaded calibrated params from: %s\n", file))
+    return(params)
+  }
+
+  cat("No calibration file found, using defaults\n")
+  list(
+    beta_wp = c(R1 = 4.0, R2 = 4.0, S16 = 4.0, E8plus = 4.0),
+    save_strengths = c(0.60, 0.50, 0.35, 0.15, 0.0, 0.0),
+    beta_avail = 1.0
+  )
 }
 
 cat("Splash ownership module loaded\n")
