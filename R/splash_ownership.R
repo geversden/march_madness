@@ -365,24 +365,57 @@ extract_day_picks <- function(results_dt, day_col, slot_id, year) {
   }
 
   if (has_picks_col) {
-    # --- 2024 list-of-vectors format: day{X}_picks is a named list ---
-    # day1_picks$teamAlias is a character vector of length n_entries
+    # --- 2024 format: day{X}_picks column ---
+    # Could be stored as:
+    #   (a) Named list of vectors: list(gameId=chr[n], teamAlias=chr[n], ...)
+    #   (b) List column of per-row named lists: list(list(gameId="x", teamAlias="y",...), ...)
     picks_data <- results_dt[[picks_col]]
 
-    if (is.list(picks_data) && !is.data.frame(picks_data) && !is.null(names(picks_data))) {
-      # Named list of vectors (each length n_entries)
-      alias_vec <- picks_data[["teamAlias"]]
-      name_vec <- picks_data[["teamName"]]
-      win_vec <- picks_data[["winning"]]
+    if (is.list(picks_data) && !is.data.frame(picks_data)) {
+      # Check if it's a named list of vectors (pattern a)
+      if (!is.null(names(picks_data)) && "teamAlias" %in% names(picks_data)) {
+        alias_vec <- picks_data[["teamAlias"]]
+        name_vec <- picks_data[["teamName"]]
+        win_vec <- picks_data[["winning"]]
 
-      return(data.table(
-        year       = year,
-        entry_id   = entry_ids,
-        slot_id    = slot_id,
-        team_alias = if (!is.null(alias_vec)) as.character(alias_vec) else NA_character_,
-        team_name  = if (!is.null(name_vec)) as.character(name_vec) else NA_character_,
-        won        = if (!is.null(win_vec)) as.logical(win_vec) else NA
-      ))
+        return(data.table(
+          year       = year,
+          entry_id   = entry_ids,
+          slot_id    = slot_id,
+          team_alias = if (!is.null(alias_vec)) as.character(alias_vec) else NA_character_,
+          team_name  = if (!is.null(name_vec)) as.character(name_vec) else NA_character_,
+          won        = if (!is.null(win_vec)) as.logical(win_vec) else NA
+        ))
+      }
+
+      # Check if it's a list of per-row named lists (pattern b)
+      # Peek at the first non-NULL element to detect structure
+      first_elem <- picks_data[[1]]
+      if (is.list(first_elem) && !is.null(names(first_elem)) &&
+          "teamAlias" %in% names(first_elem)) {
+        picks_long <- rbindlist(lapply(seq_len(n_entries), function(i) {
+          item <- picks_data[[i]]
+          if (is.null(item)) {
+            return(data.table(
+              year = year, entry_id = entry_ids[i], slot_id = slot_id,
+              team_alias = NA_character_, team_name = NA_character_, won = NA
+            ))
+          }
+          # Item might be a named list with $picks sub-element (like day7_8 in 2024)
+          if ("picks" %in% names(item) && is.data.frame(item$picks)) {
+            item <- item$picks
+          }
+          data.table(
+            year       = year,
+            entry_id   = entry_ids[i],
+            slot_id    = slot_id,
+            team_alias = as.character(item[["teamAlias"]]),
+            team_name  = as.character(item[["teamName"]]),
+            won        = as.logical(item[["winning"]])
+          )
+        }), fill = TRUE)
+        return(picks_long)
+      }
     }
   }
 
