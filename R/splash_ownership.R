@@ -46,7 +46,7 @@ estimate_ownership <- function(slot_id, teams_dt, sim_matrix, round_info,
                                 params = NULL) {
   slot <- get_slot(slot_id)
   game_idxs <- slot$game_indices
-  n_picks <- slot$n_picks
+  n_picks <- if (!is.null(params$format)) get_n_picks(slot_id, params$format) else slot$n_picks
   round_num <- slot$round_num
 
   # Identify teams playing in this slot

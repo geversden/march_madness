@@ -497,7 +497,7 @@ is_bracket_compatible <- function(candidate_id, candidate_round,
 #' @return List with: ev, p_survive_today, p_win_contest, mean_death_rd, p_survive_all,
 #'         and optionally forward_picks
 compute_candidate_ev <- function(candidate_id, ctx, tw, diagnostics = FALSE,
-                                  beam_width = 5, expand_top = 3) {
+                                  beam_width = 5, expand_top = 10) {
   n_sims <- ctx$n_sims
   max_round <- ctx$max_round
   n_remaining <- ctx$n_remaining
