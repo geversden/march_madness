@@ -265,8 +265,8 @@ SPLASH_SLOTS$R2_d2$game_indices <- R32_SUN_GAMES
 # Below is a reasonable default (East/South Thu, West/Midwest Fri)
 # but should be updated once the NCAA publishes the S16 schedule.
 
-S16_THU_GAMES <- c(49, 50, 51, 52)  # East + South (update when schedule announced)
-S16_FRI_GAMES <- c(53, 54, 55, 56)  # West + Midwest (update when schedule announced)
+S16_THU_GAMES <- c(51, 52, 53, 54)  # West + South (update when schedule announced)
+S16_FRI_GAMES <- c(49, 50, 55, 56)  # East + Midwest (update when schedule announced)
 
 SPLASH_SLOTS$S16_d1$game_indices <- S16_THU_GAMES
 SPLASH_SLOTS$S16_d2$game_indices <- S16_FRI_GAMES
@@ -281,8 +281,8 @@ SPLASH_SLOTS$S16_d2$game_indices <- S16_FRI_GAMES
 #
 # Default: East+South on Sat (57,58), West+Midwest on Sun (59,60)
 # UPDATE when NCAA publishes E8 schedule.
-E8_SAT_GAMES <- c(57, 58)
-E8_SUN_GAMES <- c(59, 60)
+E8_SAT_GAMES <- c(58, 59)
+E8_SUN_GAMES <- c(57, 60)
 
 SPLASH_SLOTS$E8_d1$game_indices <- E8_SAT_GAMES
 SPLASH_SLOTS$E8_d2$game_indices <- E8_SUN_GAMES
@@ -308,22 +308,24 @@ get_teams_in_slot <- function(slot_id, teams_dt) {
 
   team_ids <- integer(0)
   for (g in game_idxs) {
+    # Map any game in the tournament back to its Round of 64 feeder games
     if (g <= 32) {
-      # R64: game g pairs bracket positions (2g-1, 2g)
-      team_ids <- c(team_ids, teams_dt$team_id[2 * g - 1], teams_dt$team_id[2 * g])
+      r64_games <- g
     } else if (g <= 48) {
-      # R32: participants depend on R64 results -- return all possible teams
-      # R32 game g comes from R64 games (2*(g-33)+1) and (2*(g-33)+2)
-      # Each R64 game has 2 teams, so 4 possible teams
-      r64_g1 <- 2 * (g - 33) + 1
-      r64_g2 <- 2 * (g - 33) + 2
-      for (rg in c(r64_g1, r64_g2)) {
-        team_ids <- c(team_ids, teams_dt$team_id[2 * rg - 1], teams_dt$team_id[2 * rg])
-      }
+      r64_games <- (g - 33) * 2 + 1:2
+    } else if (g <= 56) {
+      r64_games <- (g - 49) * 4 + 1:4
+    } else if (g <= 60) {
+      r64_games <- (g - 57) * 8 + 1:8
+    } else if (g <= 62) {
+      r64_games <- (g - 61) * 16 + 1:16
     } else {
-      # Later rounds: all remaining teams could be playing
-      # For pre-tournament planning, return all 64; at runtime, filter by sim results
-      return(teams_dt$team_id)
+      r64_games <- 1:32
+    }
+    
+    # Extract the original 64 teams that feed into those R64 games
+    for (rg in r64_games) {
+      team_ids <- c(team_ids, teams_dt$team_id[2 * rg - 1], teams_dt$team_id[2 * rg])
     }
   }
   unique(team_ids)

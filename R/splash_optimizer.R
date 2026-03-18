@@ -290,7 +290,7 @@ precompute_group_context <- function(group, current_slot_id, tw, teams_dt,
 
       p_field_single <- as.numeric(win_mat_sub %*% own_vec)
       if (n_picks > 1) {
-        field_slot_survive[, si] <- (p_field_single / n_picks) ^ n_picks
+        field_slot_survive[, si] <- (p_field_single / sum(own_vec)) ^ n_picks
       } else {
         field_slot_survive[, si] <- p_field_single
       }
@@ -574,7 +574,7 @@ compute_candidate_ev <- function(candidate_id, ctx, tw, diagnostics = FALSE,
         avail_scores <- scores[avail_mask]
         avail_ids <- as.integer(names(avail_scores))
 
-        # Filter by bracket compatibility against ALL picks (incl. multi-pick extras)
+# Filter by bracket compatibility against ALL picks (incl. multi-pick extras)
         compat_mask <- vapply(avail_ids, function(tid) {
           is_bracket_compatible(tid, rd, path$bracket_teams, path$bracket_rounds)
         }, logical(1))
@@ -596,8 +596,15 @@ compute_candidate_ev <- function(candidate_id, ctx, tw, diagnostics = FALSE,
         avail_scores <- avail_scores[compat_mask]
         avail_ids <- avail_ids[compat_mask]
 
-        # Take top expand_top teams by mini-EV score
-        n_expand <- min(expand_top, length(avail_scores))
+        # NEW: Drop mathematically dead teams (score <= 0) before expanding
+        alive_mask <- avail_scores > 0
+        avail_scores <- avail_scores[alive_mask]
+        avail_ids <- avail_ids[alive_mask]
+
+        # Dial expand_top back down to 5 (or whatever default you prefer). We only need the best viable teams.
+        n_expand <- min(5, length(avail_scores))
+        if (n_expand == 0) next
+        
         top_idx <- order(avail_scores, decreasing = TRUE)[1:n_expand]
 
         for (ti in top_idx) {
@@ -1003,7 +1010,7 @@ evaluate_portfolio_ev <- function(allocation, groups, current_slot_id,
       wm <- tw$team_round_wins[[slot_def$round_num]][sample_idx, , drop = FALSE]
       p_field_single <- as.numeric(wm %*% own_vec)
       if (n_picks > 1) {
-        slot_survive[, si] <- (p_field_single / n_picks) ^ n_picks
+        slot_survive[, si] <- (p_field_single / sum(own_vec)) ^ n_picks
       } else {
         slot_survive[, si] <- p_field_single
       }
@@ -1025,45 +1032,61 @@ evaluate_portfolio_ev <- function(allocation, groups, current_slot_id,
     }
     p_field_all <- cum_survive[, n_remaining]
 
-    # --- Vectorized portfolio payout computation ---
+# --- Vectorized portfolio payout computation (DIVERSIFIED ASSUMPTION) ---
+    # We assume entries sharing an R1 pick will optimally diverge in future rounds.
+    # We evaluate their path EVs independently, then apply a global portfolio collision discount.
+    
+    portfolio_ev_raw <- 0
+    
+    # We still need our_best and our_at_best for the diagnostic printouts to work
     eff <- alloc_deaths
     eff[eff == 0L] <- max_round + 1L
-
     our_best <- if (n_alloc == 1) eff[1, ] else apply(eff, 2, max)
-
     our_at_best <- numeric(sim_sample_size)
     for (ai in seq_len(n_alloc)) {
       our_at_best <- our_at_best + alloc_n[ai] * (eff[ai, ] == our_best)
     }
 
-    payouts <- numeric(sim_sample_size)
-
-    # Case A: some of our entries survived everything
-    mask <- which(our_best == (max_round + 1L))
-    if (length(mask) > 0) {
-      field_surv <- p_field_all[mask] * full_field
-      payouts[mask] <- prize_pool * our_at_best[mask] / (our_at_best[mask] + field_surv)
-    }
-
-    # Case B: our best is death at round d
-    for (d in 1:max_round) {
-      mask <- which(our_best == d)
-      if (length(mask) == 0) next
-
-      p_outlast <- p_field_all[mask]
-      if (d < max_round) {
-        for (rd in (d + 1):max_round) {
-          p_outlast <- p_outlast + p_field_dies_round[mask, rd]
-        }
+    # Calculate independent EV for each allocated path
+    for (ai in seq_len(n_alloc)) {
+      path_deaths <- eff[ai, ]
+      n_entries <- alloc_n[ai]
+      path_ev_sum <- 0
+      
+      # Case A: Survived all
+      mask_surv <- which(path_deaths == (max_round + 1L))
+      if (length(mask_surv) > 0) {
+        field_surv <- p_field_all[mask_surv] * full_field
+        path_ev_sum <- path_ev_sum + sum(prize_pool / (1 + field_surv))
       }
-      p_nobody <- (1 - p_outlast) ^ full_field
-
-      field_same <- p_field_dies_round[mask, d] * full_field
-      total <- our_at_best[mask] + field_same
-      payouts[mask] <- p_nobody * prize_pool * our_at_best[mask] / total
+      
+      # Case B: Died in round d
+      for (d in 1:max_round) {
+        mask_d <- which(path_deaths == d)
+        if (length(mask_d) == 0) next
+        
+        p_outlast <- p_field_all[mask_d]
+        if (d < max_round) {
+          for (rd in (d + 1):max_round) {
+            p_outlast <- p_outlast + p_field_dies_round[mask_d, rd]
+          }
+        }
+        p_nobody <- (1 - p_outlast) ^ full_field
+        field_same <- p_field_dies_round[mask_d, d] * full_field
+        
+        path_ev_sum <- path_ev_sum + sum(p_nobody * prize_pool / (1 + field_same))
+      }
+      
+      portfolio_ev_raw <- portfolio_ev_raw + (path_ev_sum / sim_sample_size) * n_entries
     }
-
-    portfolio_ev <- mean(payouts)
+    
+    # Apply global portfolio cannibalization discount
+    # If we own 1.3% of the field, our independent paths still naturally collide ~1.3% of the time.
+    discount_factor <- full_field / contest_size
+    portfolio_ev <- portfolio_ev_raw * discount_factor
+    
+    # Dummy payouts array so the diagnostic print loop below doesn't break
+    payouts <- rep(portfolio_ev / our_n, sim_sample_size)
 
     # --- Diagnostics ---
     cat(sprintf("\n  [Portfolio EV] Contest %s: %d allocs, %d entries, field=%d, prize=$%s\n",
@@ -1305,8 +1328,9 @@ optimize_today <- function(state, candidates, current_slot_id, sim, tw,
     }
   }
 
-  # --- Greedy assignment ---
+# --- Greedy assignment (Marginal EV Maximization) ---
   allocation_list <- list()
+  cat("\n--- Running Greedy Marginal Allocator ---\n")
 
   for (gi in seq_len(nrow(groups))) {
     g <- groups[gi]
@@ -1314,11 +1338,17 @@ optimize_today <- function(state, candidates, current_slot_id, sim, tw,
     if (nrow(g_scores) == 0) next
 
     setorder(g_scores, -ev)
-    best <- g_scores[1]
     n_ent <- g$n_entries
-    max_per_team <- max(1, ceiling(n_ent * 0.6))
-
+    
+    # Safe dynamic filter: Keep only teams that are mathematically viable.
+    # We keep the top 15 teams, OR any team with an EV > 0.01, whichever is smaller.
+    # This prevents the "NA" bug when EVs are naturally low in tough structures.
+    top_viable <- min(15, sum(g_scores$ev > 0.01))
+    if (top_viable == 0) top_viable <- 1 # Failsafe
+    g_scores <- g_scores[1:top_viable]
+    
     if (n_ent <= 3 || nrow(g_scores) <= 1) {
+      best <- g_scores[1]
       allocation_list[[length(allocation_list) + 1]] <- data.table(
         contest_id      = g$contest_id,
         group_id        = g$group_id,
@@ -1330,30 +1360,99 @@ optimize_today <- function(state, candidates, current_slot_id, sim, tw,
         p_win_contest   = best$p_win_contest
       )
     } else {
-      top_n <- min(3, nrow(g_scores))
+      cat(sprintf("  Allocating %d entries for group %d...\n", n_ent, gi))
+      
+      # Recalculate context quickly for the marginal math
+      ctx <- precompute_group_context(g, current_slot_id, tw, teams_dt,
+                                      ownership_by_slot, sample_idx)
+      
+      # Scale targets: cap at 8 teams max, which is plenty for 150 entries
+      target_n <- max(3, min(8, ceiling(n_ent / 15))) 
+      top_n <- min(target_n, nrow(g_scores))
       top <- g_scores[1:top_n]
-      evs <- pmax(top$ev, 0.01)
-      weights <- evs / sum(evs)
-      raw_alloc <- round(weights * n_ent)
-      raw_alloc <- pmin(raw_alloc, max_per_team)
-      diff <- n_ent - sum(raw_alloc)
-      if (diff > 0) raw_alloc[1] <- raw_alloc[1] + diff
-      if (diff < 0) {
-        for (k in top_n:1) {
-          reduce <- min(-diff, raw_alloc[k] - 1)
-          raw_alloc[k] <- raw_alloc[k] - reduce
-          diff <- diff + reduce
-          if (diff == 0) break
+      
+      # Pre-extract death rounds from cache
+      max_round <- ctx$max_round
+      n_sims <- ctx$n_sims
+      D <- matrix(0L, nrow = top_n, ncol = n_sims)
+      for (k in seq_len(top_n)) {
+        cache_key <- paste0(g$group_id, ":", top$team_id[k])
+        D[k, ] <- death_rd_cache[[cache_key]]
+      }
+      D[D == 0L] <- max_round + 1L
+      
+      # Precompute Base Payout Numerators and Denominator Offsets
+      Num <- matrix(0, nrow = n_sims, ncol = max_round + 1L)
+      DenomOffset <- matrix(0, nrow = n_sims, ncol = max_round + 1L)
+      
+      for (tier in 1:(max_round+1L)) {
+        if (tier == max_round + 1L) {
+          Num[, tier] <- ctx$prize_pool
+          DenomOffset[, tier] <- ctx$p_field_all * ctx$full_field
+        } else {
+          p_out <- ctx$p_field_all
+          if (tier < max_round) {
+            for (rd in (tier + 1):max_round) {
+              p_out <- p_out + ctx$field_dies_round[, rd]
+            }
+          }
+          p_nobody <- (1 - p_out)^ctx$full_field
+          Num[, tier] <- p_nobody * ctx$prize_pool
+          DenomOffset[, tier] <- ctx$field_dies_round[, tier] * ctx$full_field
         }
       }
+      
+      # Marginal allocation loop
+      alloc <- rep(0L, top_n)
+      current_best <- rep(0L, n_sims)
+      current_at_best <- rep(0L, n_sims)
+      sim_idx <- 1:n_sims
+      
+      for (entry_idx in 1:n_ent) {
+        best_k <- 1
+        best_ev <- -Inf
+        best_k_best <- NULL
+        best_k_at_best <- NULL
+        
+        for (k in 1:top_n) {
+          cand_deaths <- D[k, ]
+          
+          new_best <- pmax(current_best, cand_deaths)
+          
+          # Fast logical update of entry ties at max survival round
+          new_at_best <- current_at_best
+          higher_mask <- cand_deaths > current_best
+          equal_mask <- cand_deaths == current_best
+          new_at_best[higher_mask] <- 1L
+          new_at_best[equal_mask] <- current_at_best[equal_mask] + 1L
+          
+          idx_mat <- cbind(sim_idx, new_best)
+          
+          # Marginal EV computation
+          ev <- sum( Num[idx_mat] * new_at_best / (new_at_best + DenomOffset[idx_mat]) )
+          
+          if (ev > best_ev) {
+            best_ev <- ev
+            best_k <- k
+            best_k_best <- new_best
+            best_k_at_best <- new_at_best
+          }
+        }
+        
+        alloc[best_k] <- alloc[best_k] + 1L
+        current_best <- best_k_best
+        current_at_best <- best_k_at_best
+      }
+      
+      # Append to allocation list
       for (k in seq_len(top_n)) {
-        if (raw_alloc[k] > 0) {
+        if (alloc[k] > 0) {
           allocation_list[[length(allocation_list) + 1]] <- data.table(
             contest_id      = g$contest_id,
             group_id        = g$group_id,
             team_name       = top$team_name[k],
             team_id         = top$team_id[k],
-            n_assigned      = raw_alloc[k],
+            n_assigned      = alloc[k],
             ev              = top$ev[k],
             p_survive_today = top$p_survive_today[k],
             p_win_contest   = top$p_win_contest[k]
