@@ -497,7 +497,7 @@ is_bracket_compatible <- function(candidate_id, candidate_round,
 #' @return List with: ev, p_survive_today, p_win_contest, mean_death_rd, p_survive_all,
 #'         and optionally forward_picks
 compute_candidate_ev <- function(candidate_id, ctx, tw, diagnostics = FALSE,
-                                  beam_width = 5, expand_top = 10) {
+                                  beam_width = 6, expand_top = 12) {
   n_sims <- ctx$n_sims
   max_round <- ctx$max_round
   n_remaining <- ctx$n_remaining
@@ -510,6 +510,60 @@ compute_candidate_ev <- function(candidate_id, ctx, tw, diagnostics = FALSE,
   # ---- Initialize beam with candidate pick in slot 1 ----
   rd1 <- slot_round_nums[1]
   slot1_survive <- tw$team_round_wins[[rd1]][ctx$sample_idx, candidate_id]
+  slot1_n_picks <- get_n_picks(remaining_slots[1], ctx$group_format)
+
+  # Handle multi-pick current slot (e.g., Format C: 2 picks per R1 day)
+  # Use continuation-value scoring: companion should maximize marginal EV,
+  # not just R1 win probability. This means the companion depends on the
+  # primary candidate via bracket compatibility and used-team exclusion.
+  slot1_extra_ids <- integer(0)
+  init_used <- c(ctx$used_teams, candidate_id)
+  init_bracket_teams <- candidate_id
+  init_bracket_rounds <- rd1
+
+  if (slot1_n_picks > 1) {
+    slot1_team_ids <- get_teams_in_slot(remaining_slots[1], teams_dt)
+    slot1_team_ids <- setdiff(slot1_team_ids, init_used)
+
+    # Score companions using continuation value (same approach as beam search)
+    # delta_V captures the value difference between surviving slot 1 and dying
+    win_mat_rd1 <- tw$team_round_wins[[rd1]][ctx$sample_idx, , drop = FALSE]
+    if (n_remaining >= 2) {
+      delta_V <- ctx$V_survive[, 2] - ctx$V_die[, rd1]
+    } else {
+      # Only one slot remaining — value of surviving is the terminal payout
+      delta_V <- ctx$V_survive[, n_remaining + 1] - ctx$V_die[, rd1]
+    }
+
+    for (p in 2:slot1_n_picks) {
+      if (length(slot1_team_ids) == 0) {
+        slot1_survive <- rep(0, n_sims)
+        break
+      }
+      # Filter by bracket compatibility with all current picks
+      compat_mask <- vapply(slot1_team_ids, function(tid) {
+        is_bracket_compatible(tid, rd1, init_bracket_teams, init_bracket_rounds)
+      }, logical(1))
+      slot1_team_ids <- slot1_team_ids[compat_mask]
+      if (length(slot1_team_ids) == 0) {
+        slot1_survive <- rep(0, n_sims)
+        break
+      }
+
+      # Score by marginal EV contribution: E[win_i * delta_V]
+      companion_scores <- as.numeric(
+        crossprod(win_mat_rd1[, slot1_team_ids, drop = FALSE], delta_V)
+      ) / n_sims
+      best_extra_idx <- which.max(companion_scores)
+      best_extra_id <- slot1_team_ids[best_extra_idx]
+      slot1_extra_ids <- c(slot1_extra_ids, best_extra_id)
+      slot1_survive <- slot1_survive * win_mat_rd1[, best_extra_id]
+      init_used <- c(init_used, best_extra_id)
+      init_bracket_teams <- c(init_bracket_teams, best_extra_id)
+      init_bracket_rounds <- c(init_bracket_rounds, rd1)
+      slot1_team_ids <- setdiff(slot1_team_ids, best_extra_id)
+    }
+  }
 
   # Each beam path: list(used_teams, cum_survive, partial_payout, picks, pick_rounds)
   # cum_survive = per-sim cumulative survival through slots so far
@@ -519,13 +573,13 @@ compute_candidate_ev <- function(candidate_id, ctx, tw, diagnostics = FALSE,
   init_payout <- slot1_die * ctx$V_die[, rd1]
 
   beam <- list(list(
-    used_teams     = c(ctx$used_teams, candidate_id),
+    used_teams     = init_used,
     cum_survive    = slot1_survive,
     partial_payout = init_payout,
     picks          = candidate_id,       # one per slot (for display)
     pick_rounds    = rd1,                # one per slot (for display)
-    bracket_teams  = candidate_id,       # ALL picks incl. multi-pick extras
-    bracket_rounds = rd1                 # round for each bracket_teams entry
+    bracket_teams  = init_bracket_teams, # ALL picks incl. multi-pick extras
+    bracket_rounds = init_bracket_rounds # round for each bracket_teams entry
   ))
 
   # ---- Beam search through future slots ----
@@ -704,7 +758,6 @@ compute_candidate_ev <- function(candidate_id, ctx, tw, diagnostics = FALSE,
     bt <- path$bracket_teams
     br <- path$bracket_rounds
     for (si in seq_along(remaining_slots)) {
-      if (si == 1) next
       sid <- remaining_slots[si]
       n_picks_slot <- get_n_picks(sid, ctx$group_format)
       if (n_picks_slot > 1) {
@@ -839,7 +892,8 @@ compute_candidate_ev <- function(candidate_id, ctx, tw, diagnostics = FALSE,
     p_win_contest   = best_result$p_win_contest,
     mean_death_rd   = avg_death_rd,
     p_survive_all   = p_survive_all,
-    our_death_rd    = best_result$our_death_rd
+    our_death_rd    = best_result$our_death_rd,
+    slot1_extra_ids = slot1_extra_ids
   )
 
   if (diagnostics) {
@@ -864,12 +918,11 @@ compute_candidate_ev <- function(candidate_id, ctx, tw, diagnostics = FALSE,
     result$full_field <- full_field
     result$prize_pool <- prize_pool
 
-    # For multi-pick slots (E8), find the extra picks from bracket_teams
+    # For multi-pick slots, find the extra picks from bracket_teams
     result$extra_picks <- list()
     bt <- best_result$bracket_teams
     br <- best_result$bracket_rounds
     for (si in seq_along(remaining_slots)) {
-      if (si == 1) next
       sid <- remaining_slots[si]
       n_picks_slot <- get_n_picks(sid, ctx$group_format)
       if (n_picks_slot > 1) {
@@ -1282,6 +1335,11 @@ optimize_today <- function(state, candidates, current_slot_id, sim, tw,
       cache_key <- paste0(g$group_id, ":", cid)
       death_rd_cache[[cache_key]] <- ev_result$our_death_rd
 
+      # Track companion picks for multi-pick current slot
+      extra_names <- if (length(ev_result$slot1_extra_ids) > 0) {
+        paste(teams_dt$name[ev_result$slot1_extra_ids], collapse = ", ")
+      } else NA_character_
+
       all_scores[[length(all_scores) + 1]] <- data.table(
         group_id        = g$group_id,
         contest_id      = g$contest_id,
@@ -1291,7 +1349,8 @@ optimize_today <- function(state, candidates, current_slot_id, sim, tw,
         ev              = ev_result$ev,
         p_survive_today = ev_result$p_survive_today,
         p_win_contest   = ev_result$p_win_contest,
-        mean_death_rd   = ev_result$mean_death_rd
+        mean_death_rd   = ev_result$mean_death_rd,
+        slot1_extra_name = extra_names
       )
     }
     cat(sprintf("  Scored %d candidates\n", length(avail_cids)))
@@ -1322,8 +1381,10 @@ optimize_today <- function(state, candidates, current_slot_id, sim, tw,
     top_n <- min(5, nrow(g_scores))
     for (k in 1:top_n) {
       r <- g_scores[k]
-      cat(sprintf("    %2d. %-20s EV=$%6.2f  WinToday=%5.1f%%  WinContest=%.3f%%  AvgDeath=%.1f\n",
-                  k, r$team_name, r$ev, 100 * r$p_survive_today,
+      name_str <- r$team_name
+      if (!is.na(r$slot1_extra_name)) name_str <- paste0(name_str, " + ", r$slot1_extra_name)
+      cat(sprintf("    %2d. %-35s EV=$%6.2f  WinToday=%5.1f%%  WinContest=%.3f%%  AvgDeath=%.1f\n",
+                  k, name_str, r$ev, 100 * r$p_survive_today,
                   100 * r$p_win_contest, r$mean_death_rd))
     }
   }
@@ -1357,7 +1418,8 @@ optimize_today <- function(state, candidates, current_slot_id, sim, tw,
         n_assigned      = n_ent,
         ev              = best$ev,
         p_survive_today = best$p_survive_today,
-        p_win_contest   = best$p_win_contest
+        p_win_contest   = best$p_win_contest,
+        slot1_extra_name = best$slot1_extra_name
       )
     } else {
       cat(sprintf("  Allocating %d entries for group %d...\n", n_ent, gi))
@@ -1367,7 +1429,7 @@ optimize_today <- function(state, candidates, current_slot_id, sim, tw,
                                       ownership_by_slot, sample_idx)
       
       # Scale targets: cap at 8 teams max, which is plenty for 150 entries
-      target_n <- max(3, min(8, ceiling(n_ent / 15))) 
+      target_n <- max(2, min(15, ceiling(n_ent / 15))) 
       top_n <- min(target_n, nrow(g_scores))
       top <- g_scores[1:top_n]
       
@@ -1428,11 +1490,20 @@ optimize_today <- function(state, candidates, current_slot_id, sim, tw,
           
           idx_mat <- cbind(sim_idx, new_best)
           
-          # Marginal EV computation
-          ev <- sum( Num[idx_mat] * new_at_best / (new_at_best + DenomOffset[idx_mat]) )
+          # 1. Calculate the pure mathematical Marginal EV
+          raw_ev <- sum( Num[idx_mat] * new_at_best / (new_at_best + DenomOffset[idx_mat]) )
           
-          if (ev > best_ev) {
-            best_ev <- ev
+          # 2. THE JITTER PARAMETER (Adjustable)
+          # A value of 0.03 means we assume a 3% margin of error in our sims.
+          # Increase this to 0.05 or 0.10 to force a wider, more diverse portfolio.
+          ev_jitter <- 0.1
+          
+          # 3. Apply the random noise
+          noisy_ev <- raw_ev * runif(1, min = 1 - ev_jitter, max = 1 + ev_jitter)
+          
+          # 4. Compare using the noisy EV
+          if (noisy_ev > best_ev) {
+            best_ev <- noisy_ev  # Store the noisy EV as the high score to beat
             best_k <- k
             best_k_best <- new_best
             best_k_at_best <- new_at_best
@@ -1455,7 +1526,8 @@ optimize_today <- function(state, candidates, current_slot_id, sim, tw,
             n_assigned      = alloc[k],
             ev              = top$ev[k],
             p_survive_today = top$p_survive_today[k],
-            p_win_contest   = top$p_win_contest[k]
+            p_win_contest   = top$p_win_contest[k],
+            slot1_extra_name = top$slot1_extra_name[k]
           )
         }
       }
@@ -1501,12 +1573,15 @@ print_allocation <- function(allocation, teams_dt) {
   cat("========================================================\n\n")
 
   # Summary by team
+  has_extras <- "slot1_extra_name" %in% names(allocation) &&
+    any(!is.na(allocation$slot1_extra_name))
   by_team <- allocation[, .(
     total_entries   = sum(n_assigned),
     avg_ev          = weighted.mean(ev, n_assigned),
     avg_win_today   = weighted.mean(p_survive_today, n_assigned),
     avg_win_contest = weighted.mean(p_win_contest, n_assigned),
-    n_contests      = uniqueN(contest_id)
+    n_contests      = uniqueN(contest_id),
+    slot1_extra_name = if (has_extras) slot1_extra_name[1] else NA_character_
   ), by = .(team_name, team_id)]
 
   # Add seed
@@ -1514,20 +1589,24 @@ print_allocation <- function(allocation, teams_dt) {
   by_team[, region := teams_dt$region[match(team_id, teams_dt$team_id)]]
   setorder(by_team, -total_entries)
 
-  cat(sprintf("%-20s %4s %-8s %6s %8s %9s %11s %8s\n",
+  cat(sprintf("%-35s %4s %-8s %6s %8s %9s %11s %8s\n",
               "Team", "Seed", "Region", "Entries", "Rank EV", "Win Today", "Win Contest", "Contests"))
-  cat(paste(rep("-", 82), collapse = ""), "\n")
+  cat(paste(rep("-", 97), collapse = ""), "\n")
 
   for (i in seq_len(nrow(by_team))) {
     r <- by_team[i]
-    cat(sprintf("%-20s  %2d   %-8s %5d  $%6.2f   %5.1f%%      %5.2f%%   %5d\n",
-                r$team_name, r$seed, r$region,
+    name_str <- r$team_name
+    if (has_extras && !is.na(r$slot1_extra_name)) {
+      name_str <- paste0(name_str, " + ", r$slot1_extra_name)
+    }
+    cat(sprintf("%-35s  %2d   %-8s %5d  $%6.2f   %5.1f%%      %5.2f%%   %5d\n",
+                name_str, r$seed, r$region,
                 r$total_entries, r$avg_ev, 100 * r$avg_win_today,
                 100 * r$avg_win_contest, r$n_contests))
   }
 
   total_entries <- sum(by_team$total_entries)
-  cat(paste(rep("-", 82), collapse = ""), "\n")
+  cat(paste(rep("-", 97), collapse = ""), "\n")
 
   # --- Portfolio-level EVs (corrected, share-based) ---
   if (!is.null(portfolio_ev) && nrow(portfolio_ev) > 0) {
@@ -1579,8 +1658,12 @@ print_allocation <- function(allocation, teams_dt) {
     cat(sprintf("\n  Contest: %s (%d entries%s)\n", cid, sum(ct$n_assigned), ev_label))
     for (i in seq_len(nrow(ct))) {
       r <- ct[i]
-      cat(sprintf("    %-20s: %d entries (Rank EV=$%.2f, Win today=%.1f%%, Win contest=%.2f%%)\n",
-                  r$team_name, r$n_assigned, r$ev,
+      name_str <- r$team_name
+      if ("slot1_extra_name" %in% names(ct) && !is.na(r$slot1_extra_name)) {
+        name_str <- paste0(name_str, " + ", r$slot1_extra_name)
+      }
+      cat(sprintf("    %-35s: %d entries (Rank EV=$%.2f, Win today=%.1f%%, Win contest=%.2f%%)\n",
+                  name_str, r$n_assigned, r$ev,
                   100 * r$p_survive_today, 100 * r$p_win_contest))
     }
   }
