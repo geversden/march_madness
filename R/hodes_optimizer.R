@@ -284,7 +284,9 @@ estimate_hodes_ownership <- function(round_num, teams_dt, tw, params = NULL,
     }
   }
 
-  can_play <- wp > 1e-6
+  # Use round-appropriate threshold to exclude near-zero teams (prevents GAM extrapolation artifacts)
+  can_play_thresh <- if (round_num == 1L) 0.02 else 0.01
+  can_play <- wp > can_play_thresh
   if (!any(can_play)) {
     cat(sprintf("  WARNING: No teams with positive win prob in round %d\n", round_num))
     return(setNames(numeric(0), character(0)))
@@ -507,7 +509,7 @@ precompute_hodes_context <- function(group, current_round, tw, teams_dt,
     rd  <- remaining_rounds[si]
     delta_V <- V_survive[, si + 1] - V_die[, rd]
 
-    valid_teams <- which(tw$team_round_probs[, rd] > 1e-6)
+    valid_teams <- which(tw$team_round_probs[, rd] > 0.01)
     if (length(valid_teams) == 0) {
       slot_team_scores[[si]] <- setNames(numeric(0), character(0))
       next
@@ -594,7 +596,7 @@ compute_hodes_candidate_ev <- function(primary_id, ctx, tw,
     win_mat_rd1 <- tw$team_round_wins[[rd1]][ctx$sample_idx, , drop = FALSE]
 
     for (p in 2:n_picks1) {
-      avail_ids <- setdiff(which(tw$team_round_probs[, rd1] > 1e-6), init_used)
+      avail_ids <- setdiff(which(tw$team_round_probs[, rd1] > 0.01), init_used)
       if (length(avail_ids) == 0) { slot1_survive <- rep(0, n_sims); break }
 
       compat <- vapply(avail_ids, function(tid)
@@ -965,7 +967,7 @@ optimize_hodes_today <- function(state, current_round, sim, tw, teams_dt,
     candidate_ids <- teams_dt$team_id[match(candidates, teams_dt$name)]
     candidate_ids <- candidate_ids[!is.na(candidate_ids)]
   } else {
-    candidate_ids <- which(tw$team_round_probs[, current_round] > 1e-6)
+    candidate_ids <- which(tw$team_round_probs[, current_round] > 0.01)
   }
 
   slot_label <- HODES_SLOTS[[HODES_ROUND_TO_SLOT[as.character(current_round)]]]$label
