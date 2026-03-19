@@ -285,7 +285,10 @@ estimate_hodes_ownership <- function(round_num, teams_dt, tw, params = NULL,
   }
 
   # Use round-appropriate threshold to exclude near-zero teams (prevents GAM extrapolation artifacts)
-  can_play_thresh <- if (round_num == 1L) 0.02 else 0.01
+  # Later rounds need lower thresholds since unconditional win probs shrink each round
+  can_play_thresh <- if (round_num <= 2L) {
+    if (round_num == 1L) 0.02 else 0.01
+  } else if (round_num <= 4L) 0.005 else 0.002
   can_play <- wp > can_play_thresh
   if (!any(can_play)) {
     cat(sprintf("  WARNING: No teams with positive win prob in round %d\n", round_num))
