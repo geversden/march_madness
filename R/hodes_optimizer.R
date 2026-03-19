@@ -565,7 +565,8 @@ precompute_hodes_context <- function(group, current_round, tw, teams_dt,
 compute_hodes_candidate_ev <- function(primary_id, ctx, tw,
                                         diagnostics = FALSE,
                                         beam_width = 6L, expand_top = 5L,
-                                        comp_jitter = 0) {
+                                        comp_jitter = 0,
+                                        companion_ids = NULL) {
   n_sims          <- ctx$n_sims
   max_round       <- ctx$max_round
   n_remaining     <- ctx$n_remaining
@@ -588,8 +589,19 @@ compute_hodes_candidate_ev <- function(primary_id, ctx, tw,
   init_br      <- rd1           # bracket_rounds
   seed_sum_init <- teams_dt$seed[primary_id]
 
-  # Greedy companion selection for multi-pick slot 1
-  if (n_picks1 > 1L) {
+  if (n_picks1 > 1L && !is.null(companion_ids)) {
+    # Pre-specified companions: use them directly (full-enumeration mode)
+    win_mat_rd1 <- tw$team_round_wins[[rd1]][ctx$sample_idx, , drop = FALSE]
+    for (cid in companion_ids) {
+      slot1_extra_ids <- c(slot1_extra_ids, cid)
+      slot1_survive   <- slot1_survive * win_mat_rd1[, cid]
+      seed_sum_init   <- seed_sum_init + teams_dt$seed[cid]
+      init_used <- c(init_used, cid)
+      init_bt   <- c(init_bt, cid)
+      init_br   <- c(init_br, rd1)
+    }
+  } else if (n_picks1 > 1L) {
+    # Greedy companion selection (legacy fallback)
     delta_V1 <- if (n_remaining >= 2L) ctx$V_survive[, 2] - ctx$V_die[, rd1]
                 else ctx$V_survive[, n_remaining + 1] - ctx$V_die[, rd1]
 
@@ -978,11 +990,12 @@ optimize_hodes_today <- function(state, current_round, sim, tw, teams_dt,
   all_scores     <- list()
   death_rd_cache <- list()
 
-  # For multi-pick slots (R1/R2), generate n_comp_variants companion combos per primary.
-  # Each variant uses jitter in companion selection, producing different triples.
-  # Each unique (primary, B, C) triple becomes its own candidate in the allocator.
   n_picks_current <- HODES_SLOTS[[HODES_ROUND_TO_SLOT[as.character(current_round)]]]$n_picks
-  n_comp_variants <- if (n_picks_current > 1L) 4L else 1L  # 4 variants per primary for R1/R2
+  n_companions    <- n_picks_current - 1L  # 2 companions for R1/R2, 0 for later rounds
+  # Top-K companions per primary to enumerate; (K choose n_companions) combos each
+  # K=10 gives (10 choose 2) = 45 combos per primary — wide enough to capture
+  # same-pod pairings even when their R1 win probs aren't top-5
+  comp_enum_k     <- if (n_companions >= 1L) 10L else 0L
 
   for (gi in seq_len(nrow(groups))) {
     g <- groups[gi]
@@ -993,25 +1006,100 @@ optimize_hodes_today <- function(state, current_round, sim, tw, teams_dt,
 
     avail_cids <- setdiff(candidate_ids, g$used_teams[[1]])
     seen_triples <- character(0)  # dedup within group
-    pg <- make_progress(length(avail_cids), sprintf("Grp %d scoring", gi))
 
-    for (cid in avail_cids) {
-      for (v in seq_len(n_comp_variants)) {
-        cj <- if (v == 1L) 0 else 0.6   # first variant deterministic; rest with high jitter
-        result <- compute_hodes_candidate_ev(cid, ctx, tw, comp_jitter = cj)
+    if (n_companions >= 1L) {
+      # Full enumeration mode: for each primary, enumerate top-K companion combos
+      # and run full beam search for each to properly value bracket-position synergies
+      all_comp_pool <- setdiff(which(tw$team_round_probs[, current_round] > 0.01),
+                                g$used_teams[[1]])
+      n_total_evals <- 0L
+      for (cid in avail_cids) {
+        comp_pool <- setdiff(all_comp_pool, cid)
+        # Filter bracket-compatible companions
+        comp_compat <- vapply(comp_pool, function(tid)
+          is_hodes_bracket_compatible(tid, current_round, cid, current_round), logical(1))
+        comp_pool <- comp_pool[comp_compat]
+        if (length(comp_pool) < n_companions) next
 
-        # Unique key for (primary + companions) triple
-        triple_picks <- sort(c(cid, result$slot1_extra_ids))
-        triple_key   <- paste(c(g$group_id, triple_picks), collapse = ":")
+        # Rank by R1 win probability, take top K
+        comp_probs <- tw$team_round_probs[comp_pool, current_round]
+        top_k <- min(comp_enum_k, length(comp_pool))
+        top_comp <- comp_pool[order(comp_probs, decreasing = TRUE)[1:top_k]]
 
-        if (triple_key %in% seen_triples) next   # already have this exact combo
+        # Generate all (top_k choose n_companions) combos
+        combos <- combn(top_comp, n_companions, simplify = FALSE)
+        n_total_evals <- n_total_evals + length(combos)
+      }
+      pg <- make_progress(n_total_evals, sprintf("Grp %d scoring", gi))
+
+      for (cid in avail_cids) {
+        comp_pool <- setdiff(all_comp_pool, cid)
+        comp_compat <- vapply(comp_pool, function(tid)
+          is_hodes_bracket_compatible(tid, current_round, cid, current_round), logical(1))
+        comp_pool <- comp_pool[comp_compat]
+        if (length(comp_pool) < n_companions) next
+
+        comp_probs <- tw$team_round_probs[comp_pool, current_round]
+        top_k <- min(comp_enum_k, length(comp_pool))
+        top_comp <- comp_pool[order(comp_probs, decreasing = TRUE)[1:top_k]]
+        combos <- combn(top_comp, n_companions, simplify = FALSE)
+
+        for (combo in combos) {
+          # Check mutual bracket compatibility among all companions
+          all_triple <- c(cid, combo)
+          all_compat <- TRUE
+          if (n_companions >= 2L) {
+            for (ci in 1:(length(combo) - 1)) {
+              for (cj in (ci + 1):length(combo)) {
+                if (!is_hodes_bracket_compatible(combo[cj], current_round,
+                      c(cid, combo[1:ci]), rep(current_round, 1 + ci))) {
+                  all_compat <- FALSE; break
+                }
+              }
+              if (!all_compat) break
+            }
+          }
+
+          if (!all_compat) { pg$tick(); next }
+
+          triple_picks <- sort(all_triple)
+          triple_key   <- paste(c(g$group_id, triple_picks), collapse = ":")
+          if (triple_key %in% seen_triples) { pg$tick(); next }
+
+          result <- compute_hodes_candidate_ev(cid, ctx, tw, companion_ids = combo)
+          seen_triples <- c(seen_triples, triple_key)
+          death_rd_cache[[triple_key]] <- result$our_death_rd
+
+          extra_names <- paste(teams_dt$name[combo], collapse = " + ")
+          s16opt_name <- if (!is.na(result$s16opt_id)) teams_dt$name[result$s16opt_id] else NA_character_
+
+          all_scores[[length(all_scores) + 1]] <- data.table(
+            group_id        = g$group_id,
+            contest_id      = g$contest_id,
+            n_entries       = g$n_entries,
+            team_name       = teams_dt$name[cid],
+            team_id         = cid,
+            triple_key      = triple_key,
+            ev              = result$ev,
+            p_survive_today = result$p_survive_today,
+            p_win_contest   = result$p_win_contest,
+            mean_death_rd   = result$mean_death_rd,
+            seed_sum        = result$seed_sum,
+            extra_names     = extra_names,
+            s16opt_name     = s16opt_name
+          )
+          pg$tick()
+        }
+      }
+      pg$done()
+    } else {
+      # Single-pick rounds: no companions needed
+      pg <- make_progress(length(avail_cids), sprintf("Grp %d scoring", gi))
+      for (cid in avail_cids) {
+        result <- compute_hodes_candidate_ev(cid, ctx, tw)
+        triple_key <- paste(c(g$group_id, cid), collapse = ":")
         seen_triples <- c(seen_triples, triple_key)
-
         death_rd_cache[[triple_key]] <- result$our_death_rd
-
-        extra_names <- if (length(result$slot1_extra_ids) > 0)
-          paste(teams_dt$name[result$slot1_extra_ids], collapse = " + ")
-        else NA_character_
 
         s16opt_name <- if (!is.na(result$s16opt_id)) teams_dt$name[result$s16opt_id] else NA_character_
 
@@ -1027,13 +1115,13 @@ optimize_hodes_today <- function(state, current_round, sim, tw, teams_dt,
           p_win_contest   = result$p_win_contest,
           mean_death_rd   = result$mean_death_rd,
           seed_sum        = result$seed_sum,
-          extra_names     = extra_names,
+          extra_names     = NA_character_,
           s16opt_name     = s16opt_name
         )
+        pg$tick()
       }
-      pg$tick()
+      pg$done()
     }
-    pg$done()
   }
 
   scores <- rbindlist(all_scores)
@@ -1091,7 +1179,6 @@ optimize_hodes_today <- function(state, current_round, sim, tw, teams_dt,
       cat(sprintf("  Allocating %d entries for group %d...\n", n_ent, gi))
 
       ctx <- precompute_hodes_context(g, current_round, tw, teams_dt, own_by_round, sample_idx)
-      # Allow enough unique triples for all entries + buffer; each triple used at most once.
       top_n <- min(nrow(gs), max(n_ent + 10L, 20L))
       top   <- gs[1:top_n]
 
@@ -1124,19 +1211,18 @@ optimize_hodes_today <- function(state, current_round, sim, tw, teams_dt,
         }
       }
 
-      # Marginal EV allocation: each triple used at most once (enforce unique combos)
+      # Marginal EV allocation: triples can be reused across entries
       alloc         <- rep(0L, top_n)
       current_best  <- rep(0L, sim_sample_size)
       current_at_best <- rep(0L, sim_sample_size)
       sim_idx       <- seq_len(sim_sample_size)
-      ev_jitter     <- 0.10
+      ev_jitter     <- 0.05
 
       for (entry_idx in seq_len(n_ent)) {
         best_k <- NA_integer_; best_mev <- -Inf
         best_k_best <- NULL; best_k_at_best <- NULL
 
         for (k in seq_len(top_n)) {
-          if (alloc[k] >= 1L) next   # each triple used at most once
           cand_deaths <- D[k, ]
           new_best    <- pmax(current_best, cand_deaths)
 
@@ -1157,7 +1243,6 @@ optimize_hodes_today <- function(state, current_round, sim, tw, teams_dt,
         }
 
         if (is.na(best_k)) {
-          # All triples used once — fall back to allowing reuse of best overall
           best_k <- 1L; best_k_best <- pmax(current_best, D[1, ]); best_k_at_best <- current_at_best
         }
         alloc[best_k]   <- alloc[best_k] + 1L
@@ -1483,8 +1568,12 @@ run_hodes_optimizer <- function(sim_file, current_round,
       prev <- field_used[[nm]] %||% 0
       field_used[[nm]] <- min(1, prev + own[nm] / max(sum(own), 1))
     }
-    cat(sprintf("  Round %d ownership: top picks = %s\n", rd,
-                paste(head(names(sort(own, decreasing = TRUE)), 3), collapse = ", ")))
+    top_own <- sort(own[own > 0.001], decreasing = TRUE)
+    top_n <- head(top_own, 10)
+    cat(sprintf("  Round %d ownership (top %d):\n", rd, length(top_n)))
+    for (j in seq_along(top_n)) {
+      cat(sprintf("    %-20s %5.1f%%\n", names(top_n)[j], 100 * top_n[j]))
+    }
   }
 
   # Run optimizer
