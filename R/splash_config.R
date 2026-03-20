@@ -368,6 +368,44 @@ format_slot_cols <- function(format = "A") {
   sapply(get_slot_order(format), slot_col_name, USE.NAMES = FALSE)
 }
 
+# ==============================================================================
+# DAY-TO-SLOT MAPPING
+#
+# Maps scraper "day1", "day2", etc. to slot IDs per format.
+# Format C has 2 picks/day for days 1-4 (handled by n_picks_override).
+# ==============================================================================
+
+DAY_SLOT_MAP <- list(
+  A = c(day1="R1_d1", day2="R1_d2", day3="R2_d1", day4="R2_d2",
+        day5="S16_d1", day6="S16_d2", day7="E8", day8="FF", day9="CHAMP"),
+  B = c(day1="R1_d1", day2="R1_d2", day3="R2_d1", day4="R2_d2",
+        day5="S16_d1", day6="S16_d2", day7="E8_d1", day8="E8_d2",
+        day9="FF", day10="CHAMP"),
+  C = c(day1="R1_d1", day2="R1_d2", day3="R2_d1", day4="R2_d2",
+        day5="S16_d1", day6="S16_d2", day7="E8", day8="FF", day9="CHAMP")
+)
+
+# ==============================================================================
+# PATH VIABILITY BOOST
+#
+# Multiplier applied to field pick probability when a candidate's opponent
+# is in the group's used_teams (path viability — they need used teams
+# eliminated to have future picks available).
+#
+# Keyed by round_num (character). Tunable — backtest against historical data.
+#   Inf  = mandatory: zero out non-viable picks (fallback to softmax if forced)
+#   <Inf = soft boost: multiply prob by this factor for viable picks
+# ==============================================================================
+
+PATH_VIABILITY_BOOST <- list(
+  "1" = 1.3,    # R1: mild preference
+  "2" = 1.5,    # R2: moderate
+  "3" = 2.0,    # S16: strong preference
+  "4" = Inf,    # E8: mandatory
+  "5" = Inf,    # FF: mandatory
+  "6" = Inf     # Champ: mandatory
+)
+
 cat("Splash config loaded\n")
 cat("  Format A: 9 slots, 10 picks (1/day, E8 combined)\n")
 cat("  Format B: 10 slots, 10 picks (1/day, E8 split)\n")

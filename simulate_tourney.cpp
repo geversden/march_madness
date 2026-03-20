@@ -175,3 +175,285 @@ List run_tournament_sims(NumericVector ratings,
     Named("n_sims")               = n_sims
   );
 }
+
+// =============================================================================
+// Locked-results tournament simulation
+//
+// Same as simulate_bracket_cpp but with locked_results: IntegerVector of
+// length 63. If locked_results[game_idx] > 0, that team wins (skip RNG).
+// If <= 0, simulate normally. Rating updates still apply to locked winners.
+// =============================================================================
+
+// Internal: simulate one bracket with locked results
+IntegerVector simulate_bracket_locked(NumericVector ratings,
+                                      IntegerVector bracket_order,
+                                      double update_factor,
+                                      NumericVector r1_win_probs,
+                                      IntegerVector locked_results) {
+  int n = bracket_order.size(); // 64
+  bool has_r1_probs = (r1_win_probs.size() == 32);
+
+  NumericVector cur_ratings = clone(ratings);
+
+  std::vector<int> participants(n);
+  for (int i = 0; i < n; i++) {
+    participants[i] = bracket_order[i] - 1; // 0-indexed
+  }
+
+  IntegerVector game_winners(63);
+  int game_idx = 0;
+  int round_size = n;
+  bool first_round = true;
+
+  while (round_size > 1) {
+    int n_games = round_size / 2;
+    std::vector<int> next_round(n_games);
+
+    for (int g = 0; g < n_games; g++) {
+      int team_a = participants[2 * g];
+      int team_b = participants[2 * g + 1];
+
+      int winner, loser;
+
+      // Check if this game is locked
+      if (locked_results[game_idx] > 0) {
+        int locked_team = locked_results[game_idx] - 1; // 0-indexed
+        if (locked_team == team_a) {
+          winner = team_a;
+          loser = team_b;
+        } else {
+          winner = team_b;
+          loser = team_a;
+        }
+      } else {
+        // Simulate normally
+        double p;
+        if (first_round && has_r1_probs) {
+          p = r1_win_probs[g];
+        } else {
+          p = win_prob(cur_ratings[team_a], cur_ratings[team_b]);
+        }
+        double r = R::runif(0.0, 1.0);
+        if (r < p) {
+          winner = team_a;
+          loser = team_b;
+        } else {
+          winner = team_b;
+          loser = team_a;
+        }
+      }
+
+      // Rating update (applied even when locked, so downstream games use
+      // updated ratings)
+      double p_for_update = win_prob(cur_ratings[team_a], cur_ratings[team_b]);
+      double winner_prob = (winner == team_a) ? p_for_update : 1.0 - p_for_update;
+      double boost = update_factor * (1.0 - winner_prob);
+      cur_ratings[winner] += boost;
+
+      next_round[g] = winner;
+      game_winners[game_idx++] = winner + 1; // 1-indexed
+    }
+
+    participants = next_round;
+    round_size = n_games;
+    first_round = false;
+  }
+
+  return game_winners;
+}
+
+// Run many tournament sims with locked results
+//
+// locked_results: IntegerVector of length 63.
+//   > 0  = winner is locked (1-indexed team_id), skip RNG
+//   <= 0 = simulate normally
+//
+// [[Rcpp::export]]
+List run_tournament_sims_locked(NumericVector ratings,
+                                IntegerVector bracket_order,
+                                int n_sims,
+                                double update_factor,
+                                NumericVector r1_win_probs,
+                                IntegerVector locked_results) {
+  int n_teams = ratings.size();
+
+  IntegerMatrix all_results(n_sims, 63);
+  IntegerVector champ_counts(n_teams, 0);
+  IntegerVector final_four_counts(n_teams, 0);
+  IntegerVector elite_eight_counts(n_teams, 0);
+  IntegerVector sweet_sixteen_counts(n_teams, 0);
+
+  for (int s = 0; s < n_sims; s++) {
+    IntegerVector results = simulate_bracket_locked(ratings, bracket_order,
+                                                     update_factor, r1_win_probs,
+                                                     locked_results);
+
+    for (int g = 0; g < 63; g++) {
+      all_results(s, g) = results[g];
+    }
+
+    int champ = results[62] - 1;
+    champ_counts[champ]++;
+
+    for (int g = 56; g <= 59; g++) {
+      final_four_counts[results[g] - 1]++;
+    }
+    for (int g = 48; g <= 55; g++) {
+      elite_eight_counts[results[g] - 1]++;
+    }
+    for (int g = 32; g <= 47; g++) {
+      sweet_sixteen_counts[results[g] - 1]++;
+    }
+  }
+
+  return List::create(
+    Named("all_results")          = all_results,
+    Named("champ_counts")         = champ_counts,
+    Named("final_four_counts")    = final_four_counts,
+    Named("elite_eight_counts")   = elite_eight_counts,
+    Named("sweet_sixteen_counts") = sweet_sixteen_counts,
+    Named("n_sims")               = n_sims
+  );
+}
+
+// =============================================================================
+// Field survival simulation (C++ hot loop)
+//
+// Simulates how field entry groups survive through remaining tournament slots.
+// Each group has a pre-computed probability distribution over candidate teams
+// per slot. Within a sim, picks are sampled, checked against sim results, and
+// dynamically excluded from future slots.
+//
+// Parameters:
+//   all_results      n_sims x 63 IntegerMatrix, 1-indexed team IDs
+//   group_used       n_groups x max_used IntegerMatrix, 1-indexed team IDs,
+//                    0-padded (teams already picked in prior real slots)
+//   group_sizes      n_groups IntegerVector (weight of each group)
+//   slot_team_ids    List of n_slots IntegerVectors: candidate team IDs per slot
+//   slot_game_cols   List of n_slots IntegerVectors: 0-indexed game column in
+//                    all_results for each candidate (parallel to slot_team_ids)
+//   group_pick_probs List of n_slots NumericMatrices: n_groups x n_candidates
+//                    pick probability for each group for each candidate team.
+//                    Pre-computed in R accounting for known used teams.
+//   n_slots          Number of remaining slots to simulate
+//
+// Returns:
+//   IntegerMatrix (n_sims x n_groups): death slot (1-indexed), or
+//   n_slots+1 if the group survived all slots.
+// =============================================================================
+
+// [[Rcpp::export]]
+IntegerMatrix simulate_field_survival_cpp(
+    IntegerMatrix all_results,
+    IntegerMatrix group_used,
+    IntegerVector group_sizes,
+    List slot_team_ids,
+    List slot_game_cols,
+    List group_pick_probs,
+    int n_slots) {
+
+  int n_sims = all_results.nrow();
+  int n_groups = group_used.nrow();
+  int max_used = group_used.ncol();
+
+  // Pre-extract slot data for fast access
+  std::vector<IntegerVector> s_team_ids(n_slots);
+  std::vector<IntegerVector> s_game_cols(n_slots);
+  std::vector<NumericMatrix> s_pick_probs(n_slots);
+  std::vector<int> s_n_candidates(n_slots);
+
+  for (int s = 0; s < n_slots; s++) {
+    s_team_ids[s]    = as<IntegerVector>(slot_team_ids[s]);
+    s_game_cols[s]   = as<IntegerVector>(slot_game_cols[s]);
+    s_pick_probs[s]  = as<NumericMatrix>(group_pick_probs[s]);
+    s_n_candidates[s] = s_team_ids[s].size();
+  }
+
+  // Output: death slot per sim per group
+  IntegerMatrix death_slot(n_sims, n_groups);
+
+  // Temporary buffers (reused per sim×group to avoid allocation)
+  std::vector<double> adj_probs;
+  std::vector<int> sim_used;
+
+  for (int sim = 0; sim < n_sims; sim++) {
+    // Check for user interrupt periodically
+    if (sim % 10000 == 0) Rcpp::checkUserInterrupt();
+
+    for (int grp = 0; grp < n_groups; grp++) {
+
+      // Initialize sim_used from group's known used teams
+      sim_used.clear();
+      for (int u = 0; u < max_used; u++) {
+        int tid = group_used(grp, u);
+        if (tid == 0) break; // 0-padded
+        sim_used.push_back(tid);
+      }
+
+      int death = n_slots + 1; // survived all by default
+
+      for (int slot = 0; slot < n_slots; slot++) {
+        int n_cand = s_n_candidates[slot];
+        NumericMatrix& probs = s_pick_probs[slot];
+
+        // Build adjusted probabilities: zero out already-used teams
+        adj_probs.resize(n_cand);
+        double prob_sum = 0.0;
+
+        for (int c = 0; c < n_cand; c++) {
+          int tid = s_team_ids[slot][c];
+          double p = probs(grp, c);
+
+          // Check if this team is in sim_used
+          bool used = false;
+          for (size_t u = 0; u < sim_used.size(); u++) {
+            if (sim_used[u] == tid) { used = true; break; }
+          }
+
+          if (used) {
+            adj_probs[c] = 0.0;
+          } else {
+            adj_probs[c] = p;
+            prob_sum += p;
+          }
+        }
+
+        // Dead end: no available teams
+        if (prob_sum <= 0.0) {
+          death = slot + 1;
+          break;
+        }
+
+        // Sample team from adjusted distribution
+        double draw = R::runif(0.0, 1.0) * prob_sum;
+        double cumul = 0.0;
+        int picked_idx = n_cand - 1; // fallback to last
+
+        for (int c = 0; c < n_cand; c++) {
+          cumul += adj_probs[c];
+          if (draw <= cumul) {
+            picked_idx = c;
+            break;
+          }
+        }
+
+        int picked_team = s_team_ids[slot][picked_idx];
+        int game_col = s_game_cols[slot][picked_idx];
+
+        // Check if picked team won in this sim
+        int sim_winner = all_results(sim, game_col);
+        if (sim_winner != picked_team) {
+          death = slot + 1;
+          break;
+        }
+
+        // Team survived — mark as used for future slots
+        sim_used.push_back(picked_team);
+      }
+
+      death_slot(sim, grp) = death;
+    }
+  }
+
+  return death_slot;
+}

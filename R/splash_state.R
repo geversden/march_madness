@@ -14,7 +14,6 @@
 # ==============================================================================
 
 library(data.table)
-library(httr)
 
 # ==============================================================================
 # PORTFOLIO INITIALIZATION
@@ -63,6 +62,37 @@ init_portfolio <- function(contests_df) {
   cat(sprintf("Portfolio initialized: %d entries across %d contests (%s)\n",
               nrow(expanded), nrow(contests_df), fmt_str))
   expanded
+}
+
+#' Initialize portfolio from a pre-built entries data.table
+#'
+#' Used by splash_prepare.R when building state from scrape data.
+#' Validates required columns and returns as-is.
+#'
+#' @param entries_dt data.table with columns: entry_id, contest_id, contest_size,
+#'   entry_fee, prize_pool, format, alive, and pick_* columns
+#' @return Validated data.table of entry state
+init_portfolio_from_entries <- function(entries_dt) {
+  entries_dt <- as.data.table(entries_dt)
+  required_cols <- c("entry_id", "contest_id", "contest_size",
+                     "entry_fee", "prize_pool", "format", "alive")
+  missing <- setdiff(required_cols, names(entries_dt))
+  if (length(missing) > 0) stop("Missing columns: ", paste(missing, collapse = ", "))
+
+  # Ensure all pick columns exist (fill missing with NA)
+  for (slot_id in ALL_SLOT_IDS) {
+    col <- slot_col_name(slot_id)
+    if (!(col %in% names(entries_dt))) {
+      entries_dt[, (col) := NA_integer_]
+    }
+  }
+
+  fmt_counts <- table(entries_dt$format)
+  fmt_str <- paste(sprintf("%d format %s", fmt_counts, names(fmt_counts)), collapse = ", ")
+  cat(sprintf("Portfolio from entries: %d entries, %d alive, %d contests (%s)\n",
+              nrow(entries_dt), sum(entries_dt$alive),
+              length(unique(entries_dt$contest_id)), fmt_str))
+  entries_dt
 }
 
 # ==============================================================================

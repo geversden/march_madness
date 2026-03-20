@@ -11,13 +11,10 @@
 #   #   results$entry_paths - full entry-level paths for sim integration
 # ==============================================================================
 
-#' @importFrom httr GET POST add_headers content status_code
-#' @importFrom purrr map map2 map_dfr map2_dfr map_chr compact
-#' @importFrom dplyr tibble tribble mutate filter select group_by summarise
-#'   arrange left_join full_join distinct n n_distinct first rename desc
-#'   row_number
-#' @importFrom tidyr unnest unnest_wider pivot_wider separate_rows replace_na
-NULL
+library(httr)
+library(purrr)
+library(dplyr)
+library(tidyr)
 
 # ==============================================================================
 # CONTEST CONFIGURATION
@@ -25,19 +22,40 @@ NULL
 
 #' Splash contest definitions for 2026 NCAA survivor
 #' @export
-splash_contests <- tribble(
-  ~contest_name,                                         ~contest_id,                              ~fee, ~format,
-  "Kelly's $250K Survivor Madness",                      "9eba15b3-e62d-42f0-b399-5957cd33d62c",   25,   "2-2-2-2-1-1",
-  "Field of 68 Survivor Madness",                        "3f84b670-bd9e-4786-967a-f7cc63821c8c",   25,   "2-2-2-2-1-1",
-  "Ryan Hammer's $100K Survivor Madness",                "a68d9a2b-7317-4e43-9ddb-c0fa5f7b96ec",   15,   "2-2-2-2-1-1",
-  "Bet The Process Survivor Madness",                    "28f81d62-3fac-4c0f-ae18-159a3307d9c5",   100,  "2-2-2-2-1-1",
-  "Ross Tucker's $35K Survivor Madness",                 "80db5738-a417-4524-b4a3-24be60c63fd4",   50,   "2-2-2-2-1-1",
-  "Frank Michael Smith's $30K Survivor Madness",         "96acf9b2-2def-44ee-add0-d67df18ba470",   30,   "2-2-2-2-1-1",
-  "Kurt Benkert's $100K Survivor Madness",               "b3f535dc-b014-4cd6-93a1-546f800caf1a",   5,    "4-4-2-2-1-1",
-  "Spooky Express $30K Guaranteed Survivor Madness",     "6cc0a29e-86bb-4a1a-8251-2b581ad80320",   75,   "2-2-2-2-1-1",
-  "SGPN $25K Survivor Madness",                          "919e7294-fd5d-4ae0-9b87-e8969d657282",   25,   "2-2-2-2-1-1",
-  "MARCH MADNESS SURVIVOR",                              "3950c489-4150-4a19-bf01-0056a46d81c1",   10,   "2-2-2-2-1-1",
-  "FOR THE FANS - SURVIVOR MADNESS",                     "cf3889a3-84a2-4165-990b-891f67e26f9b",   40,   "4-4-2-2-1-1"
+splash_contests <- data.frame(
+  contest_name = c(
+    "Kelly's $250K Survivor Madness",
+    "Field of 68 Survivor Madness",
+    "Ryan Hammer's $100K Survivor Madness",
+    "Bet The Process Survivor Madness",
+    "Ross Tucker's $35K Survivor Madness",
+    "Frank Michael Smith's $30K Survivor Madness",
+    "Kurt Benkert's $100K Survivor Madness",
+    "Spooky Express $30K Guaranteed Survivor Madness",
+    "SGPN $25K Survivor Madness",
+    "MARCH MADNESS SURVIVOR",
+    "FOR THE FANS - SURVIVOR MADNESS"
+  ),
+  contest_id = c(
+    "9eba15b3-e62d-42f0-b399-5957cd33d62c",
+    "3f84b670-bd9e-4786-967a-f7cc63821c8c",
+    "a68d9a2b-7317-4e43-9ddb-c0fa5f7b96ec",
+    "28f81d62-3fac-4c0f-ae18-159a3307d9c5",
+    "80db5738-a417-4524-b4a3-24be60c63fd4",
+    "96acf9b2-2def-44ee-add0-d67df18ba470",
+    "b3f535dc-b014-4cd6-93a1-546f800caf1a",
+    "6cc0a29e-86bb-4a1a-8251-2b581ad80320",
+    "919e7294-fd5d-4ae0-9b87-e8969d657282",
+    "3950c489-4150-4a19-bf01-0056a46d81c1",
+    "cf3889a3-84a2-4165-990b-891f67e26f9b"
+  ),
+  fee = c(25, 25, 15, 100, 50, 30, 5, 75, 25, 10, 40),
+  format = c(
+    "2-2-2-2-1-1", "2-2-2-2-1-1", "2-2-2-2-1-1", "2-2-2-2-1-1",
+    "2-2-2-2-1-1", "2-2-2-2-1-1", "4-4-2-2-1-1", "2-2-2-2-1-1",
+    "2-2-2-2-1-1", "2-2-2-2-1-1", "4-4-2-2-1-1"
+  ),
+  stringsAsFactors = FALSE
 )
 
 # ==============================================================================
