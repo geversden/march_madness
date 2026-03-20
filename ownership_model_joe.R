@@ -293,7 +293,32 @@ if (!is.null(feats_2026)) {
     if (nrow(g) == 0) next
 
     pred <- softmax(predict(gam_model, newdata = g))
-
+    
+    # --- Post-processing: re-weight ownership by seed priority ---
+    seed_multiplier <- function(s, own_pct) {
+      # own_pct is the raw ownership (0-1 scale) used to distinguish
+      # "good" vs mediocre teams within a seed group
+      switch(as.character(s),
+             "4"  = 1.50,
+             "5"  = 1.50,
+             "3"  = 0.6,
+             "6"  = 1.2,
+             "7"  = 1.2,
+             "8"  = 1.2,
+             "9"  = 1.2,
+             "2"  = 0.5,
+             "10" = 1.1,
+             "11" = 1.1,
+             "1"  = 0.2,
+             1  # 12-16 seeds
+      )
+    }
+    
+    adj <- mapply(seed_multiplier, g$seed, pred)
+    pred <- pred * adj
+    pred <- pred / sum(pred)  # re-normalize to sum to 1
+    # --- End post-processing ---
+    
     out <- data.table(
       team  = g$name,
       seed  = g$seed,
