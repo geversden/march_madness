@@ -1214,18 +1214,19 @@ optimize_hodes_today <- function(state, current_round, sim, tw, teams_dt,
         }
       }
 
-      # Marginal EV allocation: triples can be reused across entries
+      # Marginal EV allocation: each triple assigned at most once (uniqueness constraint)
       alloc         <- rep(0L, top_n)
       current_best  <- rep(0L, sim_sample_size)
       current_at_best <- rep(0L, sim_sample_size)
       sim_idx       <- seq_len(sim_sample_size)
-      ev_jitter     <- 0.05
+      ev_jitter     <- 0.03
 
       for (entry_idx in seq_len(n_ent)) {
         best_k <- NA_integer_; best_mev <- -Inf
         best_k_best <- NULL; best_k_at_best <- NULL
 
         for (k in seq_len(top_n)) {
+          if (alloc[k] > 0L) next   # uniqueness: skip already-allocated triples
           cand_deaths <- D[k, ]
           new_best    <- pmax(current_best, cand_deaths)
 
