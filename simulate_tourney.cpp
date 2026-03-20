@@ -53,9 +53,11 @@ IntegerVector simulate_bracket_cpp(NumericVector ratings,
                                    double avg_tempo,
                                    IntegerVector bracket_order,
                                    double update_factor,
-                                   NumericVector r1_win_probs) {
+                                   NumericVector r1_win_probs,
+                                   NumericVector r2_win_probs) {
   int n = bracket_order.size(); // 64
   bool has_r1_probs = (r1_win_probs.size() == 32);
+  bool has_r2_probs = (r2_win_probs.size() == 16);
   bool has_tempos = (tempos.size() == n);
 
   // Work with mutable copies of ratings
@@ -70,7 +72,7 @@ IntegerVector simulate_bracket_cpp(NumericVector ratings,
   IntegerVector game_winners(63);
   int game_idx = 0;
   int round_size = n;
-  bool first_round = true;
+  int round_num = 1;  // 1=R64, 2=R32, 3=S16, ...
 
   // 6 rounds: 32 -> 16 -> 8 -> 4 -> 2 -> 1
   while (round_size > 1) {
@@ -82,11 +84,14 @@ IntegerVector simulate_bracket_cpp(NumericVector ratings,
       int team_b = participants[2 * g + 1];
 
       double p;
-      if (first_round && has_r1_probs) {
+      if (round_num == 1 && has_r1_probs) {
         // Use market-derived or locked-in R1 win probability for team_a
         p = r1_win_probs[g];
+      } else if (round_num == 2 && has_r2_probs && r2_win_probs[g] >= 0.0) {
+        // Use closing line R2 win probability (negative = not available, use model)
+        p = r2_win_probs[g];
       } else if (has_tempos) {
-        // Pace-adjusted win probability for rounds 2+
+        // Pace-adjusted win probability
         p = win_prob_pace(cur_ratings[team_a], cur_ratings[team_b],
                           tempos[team_a], tempos[team_b], avg_tempo);
       } else {
@@ -116,7 +121,7 @@ IntegerVector simulate_bracket_cpp(NumericVector ratings,
 
     participants = next_round;
     round_size = n_games;
-    first_round = false;
+    round_num++;
   }
 
   return game_winners;
@@ -148,7 +153,8 @@ List run_tournament_sims(NumericVector ratings,
                          IntegerVector bracket_order,
                          int n_sims,
                          double update_factor,
-                         NumericVector r1_win_probs) {
+                         NumericVector r1_win_probs,
+                         NumericVector r2_win_probs) {
   int n_teams = ratings.size();
 
   // Full results matrix: every game of every sim
@@ -163,7 +169,8 @@ List run_tournament_sims(NumericVector ratings,
   for (int s = 0; s < n_sims; s++) {
     IntegerVector results = simulate_bracket_cpp(ratings, tempos, avg_tempo,
                                                  bracket_order,
-                                                 update_factor, r1_win_probs);
+                                                 update_factor, r1_win_probs,
+                                                 r2_win_probs);
 
     // Store full 63-game result row
     for (int g = 0; g < 63; g++) {

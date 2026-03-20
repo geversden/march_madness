@@ -168,20 +168,58 @@ r1_probs[22] <- 1.0   # Gonzaga
 r1_probs[25] <- 1.0   # Michigan
 r1_probs[26] <- 0.0   # Saint Louis won (Georgia was team_a)
 
-# Friday pace-adjusted probabilities
-friday_games <- c(3, 4, 7, 8, 9, 10, 17, 18, 23, 24, 27, 28, 29, 30, 31, 32)
-for (g in friday_games) {
-  r1_probs[g] <- pace_wp(g)
+# ==============================================================================
+# LOAD CLOSING LINES for Friday R64 + Saturday R32
+# ==============================================================================
+
+cl_file <- file.path(script_dir, "closing_lines",
+                     sprintf("ncaat_%d_closing_lines.csv", YEAR))
+cl <- read.csv(cl_file, stringsAsFactors = FALSE)
+cl_to_bracket <- setNames(team_dict$bracket_name, team_dict$closing_lines_name)
+
+resolve_cl_name <- function(cl_name) {
+  if (cl_name %in% names(cl_to_bracket)) return(cl_to_bracket[[cl_name]])
+  sorted_names <- teams$name[order(nchar(teams$name), decreasing = TRUE)]
+  for (bn in sorted_names) {
+    if (startsWith(cl_name, bn)) return(bn)
+  }
+  cl_name
+}
+cl$home_bracket <- sapply(cl$home_team, resolve_cl_name)
+cl$away_bracket <- sapply(cl$away_team, resolve_cl_name)
+
+# Build per-team closing line win prob lookup
+cl_wp <- list()
+for (i in seq_len(nrow(cl))) {
+  cl_wp[[cl$home_bracket[i]]] <- cl$home_win_prob[i]
+  cl_wp[[cl$away_bracket[i]]] <- 1 - cl$home_win_prob[i]
 }
 
+# Friday R64: use closing lines where available, fall back to pace-adjusted
+friday_games <- c(3, 4, 7, 8, 9, 10, 17, 18, 23, 24, 27, 28, 29, 30, 31, 32)
+n_cl_r1 <- 0
+for (g in friday_games) {
+  ta <- teams$name[2*g-1]
+  wp_a <- cl_wp[[ta]]
+  if (!is.null(wp_a)) {
+    r1_probs[g] <- wp_a
+    n_cl_r1 <- n_cl_r1 + 1
+  } else {
+    r1_probs[g] <- pace_wp(g)
+    cat(sprintf("  WARNING: No closing line for R64 %s, using pace-adj fallback\n", ta))
+  }
+}
+cat(sprintf("Using closing lines for %d/16 Friday R64 games\n\n", n_cl_r1))
+
 cat("========================================================\n")
-cat("  R1 WIN PROBABILITIES (Thursday locked, Friday simmed)\n")
+cat("  R1 WIN PROBABILITIES (Thursday locked, Friday lines)\n")
 cat("========================================================\n")
 for (g in 1:32) {
   ta <- teams$name[2*g-1]
   tb <- teams$name[2*g]
   status <- if (r1_probs[g] == 1.0) "LOCKED"
             else if (r1_probs[g] == 0.0) "LOCKED"
+            else if (g %in% friday_games && !is.null(cl_wp[[ta]])) "CL"
             else "pace-adj"
   winner_note <- if (r1_probs[g] == 1.0) sprintf("-> %s", ta)
                  else if (r1_probs[g] == 0.0) sprintf("-> %s", tb)
@@ -195,7 +233,76 @@ cat("\n")
 r1_win_probs <- r1_probs
 
 # ==============================================================================
-# RUN SIMULATION (pace-adjusted for all rounds)
+# BUILD R2 (ROUND OF 32) WIN PROBABILITIES FROM CLOSING LINES
+# ==============================================================================
+# R32 has 16 games. Use -1.0 to signal "no line, use pace-adjusted model"
+# R32 game g (0-indexed): winner of R64 game 2g vs winner of R64 game 2g+1
+# team_a = winner from upper bracket position
+
+# Known R32 matchups (from Thursday results) with closing lines:
+# R32 Game 1:  Duke vs TCU                -> Duke -11.0
+# R32 Game 3:  Louisville vs Michigan St   -> MSU -4.5  (Louisville=team_a)
+# R32 Game 6:  Vanderbilt vs Nebraska      -> Vandy -2.5 (Vandy=team_a)
+# R32 Game 7:  VCU vs Illinois             -> Illinois -10.5 (VCU=team_a)
+# R32 Game 8:  Texas A&M vs Houston        -> Houston -9.5 (TA&M=team_a)
+# R32 Game 10: High Point vs Arkansas      -> Arkansas -11.0 (HP=team_a)
+# R32 Game 11: Texas vs Gonzaga            -> no line yet
+# R32 Game 13: Michigan vs Saint Louis     -> Michigan -12.5
+# R32 remaining: unknown R64 outcomes, use pace-adjusted
+
+r2_probs <- rep(-1.0, 16)  # -1 = use pace-adjusted model
+
+# Helper: look up closing line WP for team_a in an R32 matchup
+r2_cl <- function(team_a_name, team_b_name) {
+  # Check if we have a closing line for this matchup
+  for (i in seq_len(nrow(cl))) {
+    h <- cl$home_bracket[i]; a <- cl$away_bracket[i]
+    if ((h == team_a_name && a == team_b_name) ||
+        (h == team_b_name && a == team_a_name)) {
+      if (h == team_a_name) return(cl$home_win_prob[i])
+      else return(1 - cl$home_win_prob[i])
+    }
+  }
+  return(-1.0)  # no line found
+}
+
+# R32 Game 1 (idx 1): Duke vs TCU
+r2_probs[1] <- r2_cl("Duke", "TCU")
+# R32 Game 3 (idx 3): Louisville vs Michigan State
+r2_probs[3] <- r2_cl("Louisville", "Michigan State")
+# R32 Game 6 (idx 6): Vanderbilt vs Nebraska
+r2_probs[6] <- r2_cl("Vanderbilt", "Nebraska")
+# R32 Game 7 (idx 7): VCU vs Illinois
+r2_probs[7] <- r2_cl("VCU", "Illinois")
+# R32 Game 8 (idx 8): Texas A&M vs Houston
+r2_probs[8] <- r2_cl("Texas A&M", "Houston")
+# R32 Game 10 (idx 10): High Point vs Arkansas
+r2_probs[10] <- r2_cl("High Point", "Arkansas")
+# R32 Game 11 (idx 11): Texas vs Gonzaga
+r2_probs[11] <- r2_cl("Texas", "Gonzaga")
+# R32 Game 13 (idx 13): Michigan vs Saint Louis
+r2_probs[13] <- r2_cl("Michigan", "Saint Louis")
+
+cat("========================================================\n")
+cat("  R2 WIN PROBABILITIES (closing lines where available)\n")
+cat("========================================================\n")
+r32_team_a <- c("Duke","?","Louisville","?","?","Vanderbilt","VCU","Texas A&M",
+                "?","High Point","Texas","?","Michigan","?","?","?")
+r32_team_b <- c("TCU","?","Michigan State","?","?","Nebraska","Illinois","Houston",
+                "?","Arkansas","Gonzaga","?","Saint Louis","?","?","?")
+for (g in 1:16) {
+  if (r2_probs[g] >= 0) {
+    cat(sprintf("  R32 Game %2d: %-18s vs %-18s  p=%.3f [CL]\n",
+                g, r32_team_a[g], r32_team_b[g], r2_probs[g]))
+  }
+}
+n_cl_r2 <- sum(r2_probs >= 0)
+cat(sprintf("\nUsing closing lines for %d/16 R32 games (rest use pace-adjusted)\n\n", n_cl_r2))
+
+r2_win_probs <- r2_probs
+
+# ==============================================================================
+# RUN SIMULATION (closing lines for R1+R2, pace-adjusted for S16+)
 # ==============================================================================
 
 N_SIMS        <- 2000000
@@ -214,7 +321,7 @@ cat(sprintf("Simulating %s tournaments ...\n\n", format(N_SIMS, big.mark = ","))
 t0      <- proc.time()
 results <- run_tournament_sims(teams$rating, teams$tempo, AVG_TEMPO,
                                bracket_order, N_SIMS, UPDATE_FACTOR,
-                               r1_win_probs)
+                               r1_win_probs, r2_win_probs)
 elapsed <- (proc.time() - t0)["elapsed"]
 
 cat(sprintf("Done in %.2f seconds\n\n", elapsed))
