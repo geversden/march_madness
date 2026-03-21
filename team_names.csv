@@ -1,61 +1,64 @@
-bracket_name,kenpom_name,closing_lines_name
-Michigan State,Michigan St.,Michigan St Spartans
-Iowa State,Iowa St.,Iowa St Cyclones
-Mississippi State,Mississippi St.,Mississippi St Bulldogs
-Utah State,Utah St.,Utah St Aggies
-Colorado State,Colorado St.,Colorado St Rams
-Oklahoma State,Oklahoma St.,Oklahoma St Cowboys
-Ohio State,Ohio St.,Ohio State Buckeyes
-Florida State,Florida St.,Florida St Seminoles
-Murray State,Murray St.,Murray St Racers
-McNeese State,McNeese,McNeese Cowboys
-Morehead State,Morehead St.,Morehead St Eagles
-Kansas State,Kansas St.,Kansas St Wildcats
-Boise State,Boise St.,Boise State Broncos
-Kent State,Kent St.,Kent State Golden Flashes
-Oregon State,Oregon St.,Oregon St Beavers
-San Diego State,San Diego St.,San Diego St Aztecs
-Arizona State,Arizona St.,Arizona St Sun Devils
-Penn State,Penn St.,Penn State Nittany Lions
-South Dakota State,South Dakota St.,South Dakota St Jackrabbits
-Montana State,Montana St.,Montana St Bobcats
-Jacksonville State,Jacksonville St.,Jacksonville St Gamecocks
-Washington State,Washington St.,Washington St Cougars
-Long Beach State,Long Beach St.,Long Beach St 49ers
-Wright State,Wright St.,Wright St Raiders
-Norfolk State,Norfolk St.,Norfolk St Spartans
-Alabama State,Alabama St.,Alabama St Hornets
-Georgia State,Georgia St.,Georgia St Panthers
-Kennesaw State,Kennesaw St.,Kennesaw St Owls
-New Mexico State,New Mexico St.,New Mexico St Aggies
-Cleveland State,Cleveland St.,Cleveland St Vikings
-Grambling State,Grambling St.,Grambling St Tigers
-Ole Miss,Mississippi,Ole Miss Rebels
-UConn,Connecticut,UConn Huskies
-NC State,N.C. State,NC State Wolfpack
-SIU Edwardsville,SIUE,SIU-Edwardsville Cougars
-UCF,Central Florida,UCF Knights
-Omaha,Nebraska Omaha,Omaha Mavericks
-Mount St. Mary's,Mount St. Mary's,Mt. St. Mary's Mountaineers
-Saint Peter's,Saint Peter's,Saint Peter's Peacocks
-Cal State Fullerton,Cal St. Fullerton,CSU Fullerton Titans
-Texas A&M-Corpus Christi,Texas A&M Corpus Chris,Texas A&M-CC Islanders
-Fairleigh Dickinson,Fairleigh Dickinson,FDU Knights
-Loyola Chicago,Loyola Chicago,Loyola (Chi) Ramblers
-College of Charleston,Charleston,Charleston Cougars
-Miami,Miami FL,Miami Hurricanes
-Florida Atlantic,Florida Atlantic,Florida Atlantic Owls
-VCU,VCU,VCU Rams
-Miami OH,Miami OH,Miami OH RedHawks
-UMBC,UMBC,UMBC Retrievers
-LIU,LIU,LIU Sharks
-Cal Baptist,California Baptist,Cal Baptist Lancers
-South Florida,South Florida,South Florida Bulls
-North Dakota State,North Dakota St.,North Dakota St Bison
-Northern Iowa,Northern Iowa,Northern Iowa Panthers
-Prairie View A&M,Prairie View A&M,Prairie View A&M Panthers
-Tennessee State,Tennessee St.,Tennessee St Tigers
-Queens,Queens,Queens Royals
-Hawaii,Hawaii,Hawaii Rainbow Warriors
-Hawaii,Hawaii,Hawai'i Rainbow Warriors
-Penn,Pennsylvania,Pennsylvania Quakers
+bracket_name,kenpom_name,closing_lines_name,splash_name
+Michigan State,Michigan St.,Michigan St Spartans,Michigan State
+Iowa State,Iowa St.,Iowa St Cyclones,Iowa State
+Mississippi State,Mississippi St.,Mississippi St Bulldogs,Mississippi State
+Utah State,Utah St.,Utah St Aggies,Utah State
+Colorado State,Colorado St.,Colorado St Rams,Colorado State
+Oklahoma State,Oklahoma St.,Oklahoma St Cowboys,Oklahoma State
+Ohio State,Ohio St.,Ohio State Buckeyes,Ohio State
+Florida State,Florida St.,Florida St Seminoles,Florida State
+Murray State,Murray St.,Murray St Racers,Murray State
+McNeese State,McNeese,McNeese Cowboys,McNeese
+Morehead State,Morehead St.,Morehead St Eagles,Morehead State
+Kansas State,Kansas St.,Kansas St Wildcats,Kansas State
+Boise State,Boise St.,Boise State Broncos,Boise State
+Kent State,Kent St.,Kent State Golden Flashes,Kent State
+Oregon State,Oregon St.,Oregon St Beavers,Oregon State
+San Diego State,San Diego St.,San Diego St Aztecs,San Diego State
+Arizona State,Arizona St.,Arizona St Sun Devils,Arizona State
+Penn State,Penn St.,Penn State Nittany Lions,Penn State
+South Dakota State,South Dakota St.,South Dakota St Jackrabbits,South Dakota State
+Montana State,Montana St.,Montana St Bobcats,Montana State
+Jacksonville State,Jacksonville St.,Jacksonville St Gamecocks,Jacksonville State
+Washington State,Washington St.,Washington St Cougars,Washington State
+Long Beach State,Long Beach St.,Long Beach St 49ers,Long Beach State
+Wright State,Wright St.,Wright St Raiders,Wright State
+Norfolk State,Norfolk St.,Norfolk St Spartans,Norfolk State
+Alabama State,Alabama St.,Alabama St Hornets,Alabama State
+Georgia State,Georgia St.,Georgia St Panthers,Georgia State
+Kennesaw State,Kennesaw St.,Kennesaw St Owls,Kennesaw State
+New Mexico State,New Mexico St.,New Mexico St Aggies,New Mexico State
+Cleveland State,Cleveland St.,Cleveland St Vikings,Cleveland State
+Grambling State,Grambling St.,Grambling St Tigers,Grambling State
+Ole Miss,Mississippi,Ole Miss Rebels,Ole Miss
+UConn,Connecticut,UConn Huskies,UConn
+NC State,N.C. State,NC State Wolfpack,NC State
+SIU Edwardsville,SIUE,SIU-Edwardsville Cougars,SIU Edwardsville
+UCF,Central Florida,UCF Knights,UCF
+Omaha,Nebraska Omaha,Omaha Mavericks,Omaha
+Mount St. Mary's,Mount St. Mary's,Mt. St. Mary's Mountaineers,Mount St. Mary's
+Saint Peter's,Saint Peter's,Saint Peter's Peacocks,Saint Peter's
+Cal State Fullerton,Cal St. Fullerton,CSU Fullerton Titans,Cal State Fullerton
+Texas A&M-Corpus Christi,Texas A&M Corpus Chris,Texas A&M-CC Islanders,Texas A&M-Corpus Christi
+Fairleigh Dickinson,Fairleigh Dickinson,FDU Knights,Fairleigh Dickinson
+Loyola Chicago,Loyola Chicago,Loyola (Chi) Ramblers,Loyola Chicago
+College of Charleston,Charleston,Charleston Cougars,College of Charleston
+Miami,Miami FL,Miami Hurricanes,Miami
+Florida Atlantic,Florida Atlantic,Florida Atlantic Owls,Florida Atlantic
+VCU,VCU,VCU Rams,VCU
+Miami OH,Miami OH,Miami OH RedHawks,Miami OH
+UMBC,UMBC,UMBC Retrievers,UMBC
+LIU,LIU,LIU Sharks,LIU
+Cal Baptist,California Baptist,Cal Baptist Lancers,Cal Baptist
+South Florida,South Florida,South Florida Bulls,South Florida
+North Dakota State,North Dakota St.,North Dakota St Bison,North Dakota State
+Northern Iowa,Northern Iowa,Northern Iowa Panthers,Northern Iowa
+Prairie View A&M,Prairie View A&M,Prairie View A&M Panthers,Prairie View A&M
+Tennessee State,Tennessee St.,Tennessee St Tigers,Tennessee State
+Queens,Queens,Queens Royals,Queens
+Hawaii,Hawaii,Hawaii Rainbow Warriors,Hawaii
+Hawaii,Hawaii,Hawai'i Rainbow Warriors,Hawai'i
+Penn,Pennsylvania,Pennsylvania Quakers,Penn
+St. Mary's,Saint Mary's,Saint Mary's Gaels,Saint Mary's
+Siena,Siena,Siena Saints,Siena
+High Point,High Point,High Point Panthers,High Point

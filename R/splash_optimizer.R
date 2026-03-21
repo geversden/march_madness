@@ -248,16 +248,24 @@ forward_simulate_entry <- function(candidate_id, used_teams, current_slot_id,
 #' @param ownership_by_slot Named list: slot_id -> named numeric vector
 #' @param sample_idx Integer vector of sim indices to use
 #' @param current_slot_team_ids Team IDs playing in today's slot (excluded from future picks)
+#' @param field_survival_curves Optional: output from build_field_survival_curves().
+#'   When provided, replaces ownership-weighted field modeling with actual
+#'   grouped field simulation data. List with field_dies_slot and p_field_survives_all.
+#' @param alive_field_count Optional: actual alive field entries (excluding ours).
+#'   When provided, replaces contest_size - our_n.
 #' @return List (ctx) with precomputed matrices
 precompute_group_context <- function(group, current_slot_id, tw, teams_dt,
-                                      ownership_by_slot, sample_idx) {
+                                      ownership_by_slot, sample_idx,
+                                      field_survival_curves = NULL,
+                                      alive_field_count = NULL) {
   n_teams <- nrow(teams_dt)
   n_sims <- length(sample_idx)
   contest_size <- group$contest_size
   prize_pool <- group$prize_pool
   our_n <- group$n_entries
-  # Field = non-our entries. Our entries are handled separately in portfolio eval.
-  full_field <- contest_size - our_n
+  # Field = non-our entries. Use alive count from scrape if available.
+  full_field <- if (!is.null(alive_field_count)) alive_field_count
+                else contest_size - our_n
   used_teams <- group$used_teams[[1]]
   max_round <- 6L
 
@@ -272,46 +280,77 @@ precompute_group_context <- function(group, current_slot_id, tw, teams_dt,
     slot_round_nums[si] <- get_slot(remaining_slots[si])$round_num
   }
 
-  # ---- 1. Field survival per slot (ownership-weighted) ----
-  field_slot_survive <- matrix(1, nrow = n_sims, ncol = n_remaining)
+  # ---- 1 & 2. Field survival and death-round distribution ----
+  if (!is.null(field_survival_curves)) {
+    # Use actual grouped field simulation data (from splash_field_sim.R)
+    # field_survival_curves has: field_dies_slot (n_sims x n_slots),
+    #   p_field_survives_all (n_sims vector)
+    # We need to subsample to match sample_idx if sim sizes differ
+    fsc <- field_survival_curves
 
-  for (si in seq_along(remaining_slots)) {
-    sid <- remaining_slots[si]
-    slot <- get_slot(sid)
-    n_picks <- get_n_picks(sid, group_format)
-    win_mat_sub <- tw$team_round_wins[[slot$round_num]][sample_idx, , drop = FALSE]
-
-    own <- ownership_by_slot[[sid]]
-    if (!is.null(own) && length(own) > 0) {
-      own_vec <- numeric(n_teams)
-      own_team_ids <- teams_dt$team_id[match(names(own), teams_dt$name)]
-      valid <- !is.na(own_team_ids)
-      own_vec[own_team_ids[valid]] <- own[names(own)[valid]]
-
-      p_field_single <- as.numeric(win_mat_sub %*% own_vec)
-      if (n_picks > 1) {
-        field_slot_survive[, si] <- (p_field_single / sum(own_vec)) ^ n_picks
-      } else {
-        field_slot_survive[, si] <- p_field_single
+    # Map slot-based death to round-based death for V_die computation
+    field_dies_round <- matrix(0, nrow = n_sims, ncol = max_round)
+    for (si in seq_along(remaining_slots)) {
+      rd <- slot_round_nums[si]
+      if (si <= ncol(fsc$field_dies_slot)) {
+        field_dies_round[, rd] <- field_dies_round[, rd] +
+          fsc$field_dies_slot[sample_idx, si]
       }
     }
-  }
+    p_field_all <- fsc$p_field_survives_all[sample_idx]
 
-  # ---- 2. Field death-round distribution ----
-  field_cum <- field_slot_survive
-  if (n_remaining >= 2) {
-    for (si in 2:n_remaining) {
-      field_cum[, si] <- field_cum[, si - 1] * field_slot_survive[, si]
+    # Reconstruct field_slot_survive from death data (for diagnostics/display)
+    field_slot_survive <- matrix(1, nrow = n_sims, ncol = n_remaining)
+    for (si in seq_along(remaining_slots)) {
+      if (si <= ncol(fsc$field_dies_slot)) {
+        # Per-slot survival = 1 - (death_in_slot / alive_entering_slot)
+        # Approximate from the curves
+        field_slot_survive[, si] <- 1 - fsc$field_dies_slot[sample_idx, si]
+      }
     }
-  }
-  p_field_all <- field_cum[, n_remaining]
 
-  field_dies_round <- matrix(0, nrow = n_sims, ncol = max_round)
-  for (si in seq_along(remaining_slots)) {
-    rd <- slot_round_nums[si]
-    p_die <- if (si == 1) 1 - field_slot_survive[, si]
-             else field_cum[, si - 1] * (1 - field_slot_survive[, si])
-    field_dies_round[, rd] <- field_dies_round[, rd] + p_die
+  } else {
+    # Fallback: ownership-weighted field modeling (original approach)
+    field_slot_survive <- matrix(1, nrow = n_sims, ncol = n_remaining)
+
+    for (si in seq_along(remaining_slots)) {
+      sid <- remaining_slots[si]
+      slot <- get_slot(sid)
+      n_picks <- get_n_picks(sid, group_format)
+      win_mat_sub <- tw$team_round_wins[[slot$round_num]][sample_idx, , drop = FALSE]
+
+      own <- ownership_by_slot[[sid]]
+      if (!is.null(own) && length(own) > 0) {
+        own_vec <- numeric(n_teams)
+        own_team_ids <- teams_dt$team_id[match(names(own), teams_dt$name)]
+        valid <- !is.na(own_team_ids)
+        own_vec[own_team_ids[valid]] <- own[names(own)[valid]]
+
+        p_field_single <- as.numeric(win_mat_sub %*% own_vec)
+        if (n_picks > 1) {
+          field_slot_survive[, si] <- (p_field_single / sum(own_vec)) ^ n_picks
+        } else {
+          field_slot_survive[, si] <- p_field_single
+        }
+      }
+    }
+
+    # Field death-round distribution (ownership-based)
+    field_cum <- field_slot_survive
+    if (n_remaining >= 2) {
+      for (si in 2:n_remaining) {
+        field_cum[, si] <- field_cum[, si - 1] * field_slot_survive[, si]
+      }
+    }
+    p_field_all <- field_cum[, n_remaining]
+
+    field_dies_round <- matrix(0, nrow = n_sims, ncol = max_round)
+    for (si in seq_along(remaining_slots)) {
+      rd <- slot_round_nums[si]
+      p_die <- if (si == 1) 1 - field_slot_survive[, si]
+               else field_cum[, si - 1] * (1 - field_slot_survive[, si])
+      field_dies_round[, rd] <- field_dies_round[, rd] + p_die
+    }
   }
 
   # ---- 3. V_die[sim, round] — payout if we die in each round ----
@@ -986,7 +1025,8 @@ evaluate_portfolio_ev <- function(allocation, groups, current_slot_id,
                                    sim, tw, teams_dt, ownership_by_slot,
                                    sim_sample_size = 100000,
                                    death_rd_cache = NULL,
-                                   scoring_sample_idx = NULL) {
+                                   scoring_sample_idx = NULL,
+                                   field_sim_data = NULL) {
   n_sims <- sim$n_sims
   n_teams <- nrow(teams_dt)
   max_round <- 6L
@@ -1011,7 +1051,10 @@ evaluate_portfolio_ev <- function(allocation, groups, current_slot_id,
     prize_pool <- ct_groups$prize_pool[1]
     contest_size <- ct_groups$contest_size[1]
     our_n <- sum(ct_alloc$n_assigned)
-    full_field <- contest_size - our_n
+    # Use alive field count from scrape if available
+    ct_field_sim <- if (!is.null(field_sim_data)) field_sim_data[[cid]] else NULL
+    full_field <- if (!is.null(ct_field_sim)) ct_field_sim$alive_count
+                  else contest_size - our_n
     group_format <- if ("format" %in% names(ct_groups)) ct_groups$format[1] else "A"
     slot_order <- get_slot_order(group_format)
     current_idx <- match(current_slot_id, slot_order)
@@ -1042,48 +1085,66 @@ evaluate_portfolio_ev <- function(allocation, groups, current_slot_id,
       }
     }
 
-    # --- Field death distribution (analytical, once per contest) ---
-    slot_survive <- matrix(1, nrow = sim_sample_size, ncol = n_remaining)
+    # --- Field death distribution ---
     slot_round_nums <- integer(n_remaining)
-
     for (si in seq_along(remaining_slots)) {
-      sid <- remaining_slots[si]
-      slot_def <- get_slot(sid)
-      slot_round_nums[si] <- slot_def$round_num
-      n_picks <- get_n_picks(sid, group_format)
+      slot_round_nums[si] <- get_slot(remaining_slots[si])$round_num
+    }
 
-      own <- ownership_by_slot[[sid]]
-      if (is.null(own) || length(own) == 0) next
-
-      own_vec <- numeric(n_teams)
-      tid <- teams_dt$team_id[match(names(own), teams_dt$name)]
-      v <- !is.na(tid)
-      own_vec[tid[v]] <- own[names(own)[v]]
-
-      wm <- tw$team_round_wins[[slot_def$round_num]][sample_idx, , drop = FALSE]
-      p_field_single <- as.numeric(wm %*% own_vec)
-      if (n_picks > 1) {
-        slot_survive[, si] <- (p_field_single / sum(own_vec)) ^ n_picks
-      } else {
-        slot_survive[, si] <- p_field_single
+    if (!is.null(ct_field_sim) && !is.null(ct_field_sim$survival_curves)) {
+      # Use actual field sim curves
+      fsc <- ct_field_sim$survival_curves
+      p_field_dies_round <- matrix(0, nrow = sim_sample_size, ncol = max_round)
+      for (si in seq_along(remaining_slots)) {
+        rd <- slot_round_nums[si]
+        if (si <= ncol(fsc$field_dies_slot)) {
+          p_field_dies_round[, rd] <- p_field_dies_round[, rd] +
+            fsc$field_dies_slot[sample_idx, si]
+        }
       }
-    }
+      p_field_all <- fsc$p_field_survives_all[sample_idx]
+    } else {
+      # Fallback: ownership-weighted field model
+      slot_survive <- matrix(1, nrow = sim_sample_size, ncol = n_remaining)
 
-    cum_survive <- slot_survive
-    if (n_remaining >= 2) {
-      for (si in 2:n_remaining) {
-        cum_survive[, si] <- cum_survive[, si - 1] * slot_survive[, si]
+      for (si in seq_along(remaining_slots)) {
+        sid <- remaining_slots[si]
+        slot_def <- get_slot(sid)
+        n_picks <- get_n_picks(sid, group_format)
+
+        own <- ownership_by_slot[[sid]]
+        if (is.null(own) || length(own) == 0) next
+
+        own_vec <- numeric(n_teams)
+        tid <- teams_dt$team_id[match(names(own), teams_dt$name)]
+        v <- !is.na(tid)
+        own_vec[tid[v]] <- own[names(own)[v]]
+
+        wm <- tw$team_round_wins[[slot_def$round_num]][sample_idx, , drop = FALSE]
+        p_field_single <- as.numeric(wm %*% own_vec)
+        if (n_picks > 1) {
+          slot_survive[, si] <- (p_field_single / sum(own_vec)) ^ n_picks
+        } else {
+          slot_survive[, si] <- p_field_single
+        }
       }
-    }
 
-    p_field_dies_round <- matrix(0, nrow = sim_sample_size, ncol = max_round)
-    for (si in seq_along(remaining_slots)) {
-      rd <- slot_round_nums[si]
-      p_die <- if (si == 1) 1 - slot_survive[, si]
-               else cum_survive[, si - 1] * (1 - slot_survive[, si])
-      p_field_dies_round[, rd] <- p_field_dies_round[, rd] + p_die
+      cum_survive <- slot_survive
+      if (n_remaining >= 2) {
+        for (si in 2:n_remaining) {
+          cum_survive[, si] <- cum_survive[, si - 1] * slot_survive[, si]
+        }
+      }
+
+      p_field_dies_round <- matrix(0, nrow = sim_sample_size, ncol = max_round)
+      for (si in seq_along(remaining_slots)) {
+        rd <- slot_round_nums[si]
+        p_die <- if (si == 1) 1 - slot_survive[, si]
+                 else cum_survive[, si - 1] * (1 - slot_survive[, si])
+        p_field_dies_round[, rd] <- p_field_dies_round[, rd] + p_die
+      }
+      p_field_all <- cum_survive[, n_remaining]
     }
-    p_field_all <- cum_survive[, n_remaining]
 
 # --- Vectorized portfolio payout computation (DIVERSIFIED ASSUMPTION) ---
     # We assume entries sharing an R1 pick will optimally diverge in future rounds.
@@ -1217,7 +1278,8 @@ evaluate_portfolio_ev <- function(allocation, groups, current_slot_id,
 #' @return data.table allocation
 optimize_today <- function(state, candidates, current_slot_id, sim, tw,
                             teams_dt, ownership_by_slot,
-                            sim_sample_size = 100000) {
+                            sim_sample_size = 100000,
+                            field_sim_data = NULL) {
   groups <- group_entries(state)
   if (nrow(groups) == 0) {
     cat("No alive entries to optimize.\n")
@@ -1251,10 +1313,17 @@ optimize_today <- function(state, candidates, current_slot_id, sim, tw,
                 gi, nrow(groups), g$contest_id, g$n_entries, g$contest_size))
 
     # Precompute group context (field survival, continuation values, our future picks)
+    # Use field sim data for this contest if available
+    ct_fsd <- if (!is.null(field_sim_data)) field_sim_data[[g$contest_id]] else NULL
+    ct_survival <- if (!is.null(ct_fsd)) ct_fsd$survival_curves else NULL
+    ct_alive <- if (!is.null(ct_fsd)) ct_fsd$alive_count else NULL
+
     ctx_start <- proc.time()[["elapsed"]]
     ctx <- precompute_group_context(
       g, current_slot_id, tw, teams_dt,
-      ownership_by_slot, sample_idx
+      ownership_by_slot, sample_idx,
+      field_survival_curves = ct_survival,
+      alive_field_count = ct_alive
     )
     ctx_elapsed <- proc.time()[["elapsed"]] - ctx_start
     cat(sprintf("  Precomputed context in %.1fs\n", ctx_elapsed))
@@ -1327,6 +1396,9 @@ optimize_today <- function(state, candidates, current_slot_id, sim, tw,
 
     # Score all candidates for this group
     avail_cids <- candidate_ids[!candidate_ids %in% g$used_teams[[1]]]
+    pg_cand <- make_progress(length(avail_cids),
+                             sprintf("Group %d/%d candidates", gi, nrow(groups)),
+                             update_every = 1)
     for (cid in avail_cids) {
       cname <- teams_dt$name[cid]
       ev_result <- compute_candidate_ev(cid, ctx, tw)
@@ -1352,8 +1424,9 @@ optimize_today <- function(state, candidates, current_slot_id, sim, tw,
         mean_death_rd   = ev_result$mean_death_rd,
         slot1_extra_name = extra_names
       )
+      pg_cand$tick()
     }
-    cat(sprintf("  Scored %d candidates\n", length(avail_cids)))
+    pg_cand$done()
   }
 
   total_elapsed <- proc.time()[["elapsed"]] - overall_start
@@ -1426,7 +1499,9 @@ optimize_today <- function(state, candidates, current_slot_id, sim, tw,
       
       # Recalculate context quickly for the marginal math
       ctx <- precompute_group_context(g, current_slot_id, tw, teams_dt,
-                                      ownership_by_slot, sample_idx)
+                                      ownership_by_slot, sample_idx,
+                                      field_survival_curves = ct_survival,
+                                      alive_field_count = ct_alive)
       
       # Scale targets: cap at 8 teams max, which is plenty for 150 entries
       target_n <- max(2, min(15, ceiling(n_ent / 15))) 
@@ -1547,7 +1622,8 @@ optimize_today <- function(state, candidates, current_slot_id, sim, tw,
     portfolio_ev <- evaluate_portfolio_ev(
       allocation, groups, current_slot_id, sim, tw, teams_dt,
       ownership_by_slot, sim_sample_size = sim_sample_size,
-      death_rd_cache = death_rd_cache, scoring_sample_idx = sample_idx
+      death_rd_cache = death_rd_cache, scoring_sample_idx = sample_idx,
+      field_sim_data = field_sim_data
     )
     attr(allocation, "portfolio_ev") <- portfolio_ev
   }
@@ -1684,74 +1760,144 @@ print_allocation <- function(allocation, teams_dt) {
 #' @param contests_df If state_file is NULL, a data.frame to init the portfolio
 #' @param sim_sample_size Number of sims per EV calculation
 #' @return List with: allocation, state, sim, tw
-run_optimizer <- function(sim_file, state_file = NULL, current_slot_id,
-                           contests_df = NULL, sim_sample_size = 100000) {
+run_optimizer <- function(sim_file = NULL, state_file = NULL, current_slot_id,
+                           contests_df = NULL, sim_sample_size = 100000,
+                           scrape_inputs = NULL) {
   pipeline_start <- proc.time()[["elapsed"]]
 
-  # Load simulation results
-  cat(sprintf("Loading sim results from %s...\n", basename(sim_file)))
-  sim <- readRDS(sim_file)
-  teams_dt <- as.data.table(sim$teams)
-  cat(sprintf("  %s sims x 63 games, %d teams\n",
-              format(sim$n_sims, big.mark = ","), nrow(teams_dt)))
+  field_sim_data <- NULL
 
-  # Precompute team-round wins
-  tw <- precompute_team_wins(sim)
+  if (!is.null(scrape_inputs)) {
+    # ---- SCRAPE-BASED PATH: use real data ----
+    cat("=== Using scrape-based inputs ===\n")
+    sim <- scrape_inputs$sim
+    teams_dt <- as.data.table(sim$teams)
+    cat(sprintf("  %s sims x 63 games, %d teams\n",
+                format(sim$n_sims, big.mark = ","), nrow(teams_dt)))
 
-  # Load or init state
-  if (!is.null(state_file) && file.exists(state_file)) {
-    state <- load_state(state_file)
-  } else if (!is.null(contests_df)) {
-    state <- init_portfolio(contests_df)
+    tw <- precompute_team_wins(sim)
+    state <- scrape_inputs$portfolio
+    current_slot_id <- scrape_inputs$current_slot_id
+
+    # Get candidates for today
+    candidates_dt <- get_available_picks(current_slot_id, integer(0), teams_dt)
+    candidates <- candidates_dt$name
+
+    cat(sprintf("Portfolio: %d entries across %d contests (%d alive)\n",
+                nrow(state), uniqueN(state$contest_id), sum(state$alive)))
+    cat(sprintf("Today's candidates (%d teams): %s\n",
+                length(candidates), paste(candidates, collapse = ", ")))
+
+    # Run field sim per contest
+    cat("\nRunning field simulations per contest...\n")
+    remaining_slots <- scrape_inputs$remaining_slots
+    field_sim_data <- list()
+    field_cids <- names(scrape_inputs$field_avail)
+    pg_field <- make_progress(length(field_cids), "Field sims", update_every = 1)
+
+    for (cid in field_cids) {
+      fa <- scrape_inputs$field_avail[[cid]]
+      cat(sprintf("\n  [%s] %d alive field entries\n",
+                  fa$contest_name, fa$alive_count))
+
+      contest_size_for_sim <- fa$alive_count +
+        sum(state[contest_id == cid & alive == TRUE, .N])
+
+      result <- run_contest_field_sim(fa, sim, remaining_slots, contest_size_for_sim)
+      field_sim_data[[cid]] <- list(
+        alive_count     = fa$alive_count,
+        survival_curves = result$survival_curves,
+        field_groups    = result$field_groups
+      )
+      pg_field$tick()
+    }
+    pg_field$done()
+
+    # Still compute ownership for display purposes (current slot only)
+    own_params <- tryCatch(load_calibrated_params(), error = function(e) NULL)
+    ownership_by_slot <- list()
+    all_future_slots <- unique(unlist(lapply(c("A", "B"), function(fmt) {
+      so <- get_slot_order(fmt)
+      idx <- match(current_slot_id, so)
+      if (is.na(idx)) return(character(0))
+      so[idx:length(so)]
+    })))
+
+    cat("\nEstimating ownership (for display)...\n")
+    pg_own <- make_progress(length(all_future_slots), "Ownership", update_every = 1)
+    for (sid in all_future_slots) {
+      own <- estimate_ownership(sid, teams_dt, sim$all_results, sim$round_info,
+                                 params = own_params)
+      ownership_by_slot[[sid]] <- own
+      pg_own$tick()
+    }
+    pg_own$done()
+
+    print_ownership(current_slot_id, ownership_by_slot[[current_slot_id]],
+                    teams_dt, sim$all_results)
+
   } else {
-    stop("Must provide either state_file or contests_df")
+    # ---- ORIGINAL PATH: estimate ownership ----
+    if (is.null(sim_file)) stop("Must provide sim_file or scrape_inputs")
+
+    cat(sprintf("Loading sim results from %s...\n", basename(sim_file)))
+    sim <- readRDS(sim_file)
+    teams_dt <- as.data.table(sim$teams)
+    cat(sprintf("  %s sims x 63 games, %d teams\n",
+                format(sim$n_sims, big.mark = ","), nrow(teams_dt)))
+
+    tw <- precompute_team_wins(sim)
+
+    if (!is.null(state_file) && file.exists(state_file)) {
+      state <- load_state(state_file)
+    } else if (!is.null(contests_df)) {
+      state <- init_portfolio(contests_df)
+    } else {
+      stop("Must provide either state_file or contests_df")
+    }
+
+    candidates_dt <- get_available_picks(current_slot_id, integer(0), teams_dt)
+    candidates <- candidates_dt$name
+    cat(sprintf("Portfolio initialized: %d entries across %d contests",
+                sum(state$alive), uniqueN(state$contest_id)))
+    fmt_counts <- state[alive == TRUE, .N, by = format]
+    fmt_strs <- sprintf("%d format %s", fmt_counts$N, fmt_counts$format)
+    cat(sprintf(" (%s)\n", paste(fmt_strs, collapse = ", ")))
+
+    cat(sprintf("\nToday's candidates (%d teams): %s\n",
+                length(candidates), paste(candidates, collapse = ", ")))
+
+    own_params <- load_calibrated_params()
+
+    cat("\nEstimating ownership...\n")
+    ownership_by_slot <- list()
+    all_future_slots <- unique(unlist(lapply(c("A", "B"), function(fmt) {
+      so <- get_slot_order(fmt)
+      idx <- match(current_slot_id, so)
+      if (is.na(idx)) return(character(0))
+      so[idx:length(so)]
+    })))
+
+    pg_own <- make_progress(length(all_future_slots), "Ownership", update_every = 1)
+    for (sid in all_future_slots) {
+      own <- estimate_ownership(sid, teams_dt, sim$all_results, sim$round_info,
+                                 params = own_params)
+      ownership_by_slot[[sid]] <- own
+      pg_own$tick()
+    }
+    pg_own$done()
+
+    print_ownership(current_slot_id, ownership_by_slot[[current_slot_id]],
+                    teams_dt, sim$all_results)
   }
 
-  # Get candidates for today
   slot <- get_slot(current_slot_id)
-  candidates_dt <- get_available_picks(current_slot_id, integer(0), teams_dt)
-  candidates <- candidates_dt$name
-  cat(sprintf("Portfolio initialized: %d entries across %d contests",
-              sum(state$alive), uniqueN(state$contest_id)))
-  # Summarize formats
-  fmt_counts <- state[alive == TRUE, .N, by = format]
-  fmt_strs <- sprintf("%d format %s", fmt_counts$N, fmt_counts$format)
-  cat(sprintf(" (%s)\n", paste(fmt_strs, collapse = ", ")))
-
-  cat(sprintf("\nToday's candidates (%d teams): %s\n",
-              length(candidates), paste(candidates, collapse = ", ")))
-
-  # Load calibrated ownership params (falls back to defaults if no calibration file)
-  own_params <- load_calibrated_params()
-
-  # Estimate ownership for all slots (current + future)
-  # Use ALL_SLOT_IDS superset so ownership covers both format A and B entries
-  cat("\nEstimating ownership...\n")
-  ownership_by_slot <- list()
-  all_future_slots <- unique(unlist(lapply(c("A", "B"), function(fmt) {
-    so <- get_slot_order(fmt)
-    idx <- match(current_slot_id, so)
-    if (is.na(idx)) return(character(0))
-    so[idx:length(so)]
-  })))
-
-  pg_own <- make_progress(length(all_future_slots), "Ownership", update_every = 1)
-  for (sid in all_future_slots) {
-    own <- estimate_ownership(sid, teams_dt, sim$all_results, sim$round_info,
-                               params = own_params)
-    ownership_by_slot[[sid]] <- own
-    pg_own$tick()
-  }
-  pg_own$done()
-
-  # Print ownership for today's slot
-  print_ownership(current_slot_id, ownership_by_slot[[current_slot_id]],
-                  teams_dt, sim$all_results)
 
   # Run optimization
   allocation <- optimize_today(
     state, candidates, current_slot_id, sim, tw, teams_dt,
-    ownership_by_slot, sim_sample_size = sim_sample_size
+    ownership_by_slot, sim_sample_size = sim_sample_size,
+    field_sim_data = field_sim_data
   )
 
   # Print recommendation
