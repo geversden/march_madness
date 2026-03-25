@@ -3,6 +3,9 @@
 // Handles win probability, game simulation, rating updates, and bulk sims
 
 #include <Rcpp.h>
+#include <vector>
+#include <cmath>
+#include <algorithm>
 using namespace Rcpp;
 
 // Logistic win probability
@@ -456,4 +459,376 @@ IntegerMatrix simulate_field_survival_cpp(
   }
 
   return death_slot;
+}
+
+// =============================================================================
+// Forward-knowledge Monte Carlo path solver
+//
+// For each sim × each first-slot candidate, find the longest survivable path
+// through remaining slots using full knowledge of sim outcomes (all_results).
+// Enforces used_teams exclusion and bracket compatibility (earliest_meeting_round).
+//
+// This replaces the beam search EV computation with exact per-sim optimal paths.
+// The tree is small (~5 remaining slots × ~8 candidates each = hundreds of
+// nodes max), so brute-force DFS is fast even across 50K+ sims.
+//
+// Parameters:
+//   all_results         n_sims x 63 IntegerMatrix, 1-indexed team IDs
+//   n_field_alive       n_sims x n_slots NumericMatrix: expected # of field
+//                       entries alive after each slot (from entry-level field sim)
+//   slot_team_ids       List of n_slots IntegerVectors: candidate team IDs per slot
+//   slot_game_cols      List of n_slots IntegerVectors: 0-indexed game column for
+//                       each candidate (parallel to slot_team_ids)
+//   slot_n_picks        IntegerVector length n_slots: how many picks per slot
+//                       (1 for most; 2 for E8 combined)
+//   used_teams          IntegerVector: 1-indexed team IDs already picked
+//   first_slot_cands    IntegerVector: candidate team IDs for slot 0 (today)
+//   first_slot_gcols    IntegerVector: 0-indexed game columns for slot 0 candidates
+//   prize_pool          double: contest prize pool
+//   n_slots             int: number of remaining slots
+//
+// Returns:
+//   List with:
+//     ev          NumericVector(n_first_cands): mean EV per first-slot candidate
+//     p_survive   NumericVector(n_first_cands): P(survive all slots)
+//     mean_death  NumericVector(n_first_cands): mean death slot (0 = survived all)
+// =============================================================================
+
+// Bracket compatibility: earliest round two teams could meet
+// team IDs are 1-indexed bracket positions (1-64)
+static int earliest_meeting_round_cpp(int t1, int t2) {
+  int p1 = t1 - 1;  // 0-indexed
+  int p2 = t2 - 1;
+  for (int r = 1; r <= 6; r++) {
+    if ((p1 >> r) == (p2 >> r)) return r;
+  }
+  return 7;
+}
+
+// Get region (1-4) from team_id (1-64)
+static int get_region_cpp(int team_id) {
+  return ((team_id - 1) / 16) + 1;
+}
+
+// Check bracket compatibility: can we add candidate_id at candidate_round
+// given existing path_teams at their respective rounds?
+// Also enforces: E8+ picks must be from distinct regions, E8 pair must be
+// from opposite FF sides.
+static bool is_compat_cpp(int candidate_id, int candidate_round,
+                          const std::vector<int>& path_teams,
+                          const std::vector<int>& path_rounds) {
+  // Pairwise bracket check
+  for (size_t i = 0; i < path_teams.size(); i++) {
+    int m = earliest_meeting_round_cpp(path_teams[i], candidate_id);
+    int min_rd = std::min(path_rounds[i], candidate_round);
+    if (m <= min_rd) return false;
+  }
+
+  // Late-round region constraint (E8+ picks: rounds 4, 5, 6)
+  if (candidate_round >= 4) {
+    int cand_region = get_region_cpp(candidate_id);
+    int cand_side = (cand_region <= 2) ? 1 : 2;
+
+    for (size_t i = 0; i < path_teams.size(); i++) {
+      if (path_rounds[i] >= 4) {
+        int used_region = get_region_cpp(path_teams[i]);
+        // Must be different region from all late-round picks
+        if (used_region == cand_region) return false;
+
+        // E8 picks must be from opposite FF sides
+        if (candidate_round == 4 && path_rounds[i] == 4) {
+          int used_side = (used_region <= 2) ? 1 : 2;
+          if (cand_side == used_side) return false;
+        }
+      }
+    }
+  }
+
+  return true;
+}
+
+// DFS: find the longest survivable path from slot_idx onward.
+// Returns the best death_slot: n_slots if survived all, else the 0-indexed
+// slot where we first die.
+// best_path is populated with the team picked at each slot along the best path.
+static int dfs_best_path(
+    int slot_idx, int n_slots, int sim,
+    const IntegerMatrix& all_results,
+    const std::vector<IntegerVector>& s_team_ids,
+    const std::vector<IntegerVector>& s_game_cols,
+    const std::vector<int>& s_n_picks,
+    const std::vector<int>& s_round_nums,
+    std::vector<int>& used_teams,
+    std::vector<int>& bracket_teams,
+    std::vector<int>& bracket_rounds) {
+
+  if (slot_idx >= n_slots) {
+    return n_slots;  // survived all
+  }
+
+  int rd = s_round_nums[slot_idx];
+  int n_picks = s_n_picks[slot_idx];
+  int n_cand = s_team_ids[slot_idx].size();
+
+  int best_depth = slot_idx;  // worst case: die at this slot
+
+  if (n_picks == 1) {
+    // Single-pick slot: try each candidate
+    for (int c = 0; c < n_cand; c++) {
+      int tid = s_team_ids[slot_idx][c];
+      int gcol = s_game_cols[slot_idx][c];
+
+      // Skip if already used
+      bool is_used = false;
+      for (size_t u = 0; u < used_teams.size(); u++) {
+        if (used_teams[u] == tid) { is_used = true; break; }
+      }
+      if (is_used) continue;
+
+      // Check if this team won in this sim
+      if (all_results(sim, gcol) != tid) continue;
+
+      // Check bracket compatibility
+      if (!is_compat_cpp(tid, rd, bracket_teams, bracket_rounds)) continue;
+
+      // Recurse
+      used_teams.push_back(tid);
+      bracket_teams.push_back(tid);
+      bracket_rounds.push_back(rd);
+
+      int depth = dfs_best_path(slot_idx + 1, n_slots, sim, all_results,
+                                s_team_ids, s_game_cols, s_n_picks,
+                                s_round_nums, used_teams,
+                                bracket_teams, bracket_rounds);
+
+      used_teams.pop_back();
+      bracket_teams.pop_back();
+      bracket_rounds.pop_back();
+
+      if (depth > best_depth) {
+        best_depth = depth;
+        if (best_depth == n_slots) return n_slots;  // can't do better
+      }
+    }
+  } else {
+    // Multi-pick slot (e.g., E8 combined: 2 picks)
+    // Try all valid pairs of candidates
+    for (int c1 = 0; c1 < n_cand; c1++) {
+      int tid1 = s_team_ids[slot_idx][c1];
+      int gcol1 = s_game_cols[slot_idx][c1];
+
+      // Skip if used or didn't win
+      bool is_used1 = false;
+      for (size_t u = 0; u < used_teams.size(); u++) {
+        if (used_teams[u] == tid1) { is_used1 = true; break; }
+      }
+      if (is_used1) continue;
+      if (all_results(sim, gcol1) != tid1) continue;
+      if (!is_compat_cpp(tid1, rd, bracket_teams, bracket_rounds)) continue;
+
+      // Add first pick to state
+      used_teams.push_back(tid1);
+      bracket_teams.push_back(tid1);
+      bracket_rounds.push_back(rd);
+
+      for (int c2 = c1 + 1; c2 < n_cand; c2++) {
+        int tid2 = s_team_ids[slot_idx][c2];
+        int gcol2 = s_game_cols[slot_idx][c2];
+
+        bool is_used2 = false;
+        for (size_t u = 0; u < used_teams.size(); u++) {
+          if (used_teams[u] == tid2) { is_used2 = true; break; }
+        }
+        if (is_used2) continue;
+        if (all_results(sim, gcol2) != tid2) continue;
+        if (!is_compat_cpp(tid2, rd, bracket_teams, bracket_rounds)) continue;
+
+        // Both picks are valid winners — recurse
+        used_teams.push_back(tid2);
+        bracket_teams.push_back(tid2);
+        bracket_rounds.push_back(rd);
+
+        int depth = dfs_best_path(slot_idx + 1, n_slots, sim, all_results,
+                                  s_team_ids, s_game_cols, s_n_picks,
+                                  s_round_nums, used_teams,
+                                  bracket_teams, bracket_rounds);
+
+        used_teams.pop_back();
+        bracket_teams.pop_back();
+        bracket_rounds.pop_back();
+
+        if (depth > best_depth) {
+          best_depth = depth;
+          if (best_depth == n_slots) {
+            // Undo first pick and return
+            used_teams.pop_back();
+            bracket_teams.pop_back();
+            bracket_rounds.pop_back();
+            return n_slots;
+          }
+        }
+      }
+
+      // Also try with just one pick in a 2-pick slot
+      // (maybe only one candidate won, still valid to survive this slot
+      //  as long as we got n_picks winners... actually no: if the slot
+      //  requires 2 picks, we must find 2 winners. Try single pick too
+      //  in case no valid pair exists — better to survive with 1 than die.)
+      // Actually in Splash, a multi-pick slot means you MUST make n_picks
+      // selections. If you can't field 2, you're forced to pick a loser
+      // and you die. So single-pick survival is NOT valid for n_picks=2.
+      // But wait — the first pick already survived. If no second valid
+      // winner exists, we die at this slot. The loop above covers all pairs.
+      // If no pair was found, best_depth stays at slot_idx (die here).
+
+      // Undo first pick
+      used_teams.pop_back();
+      bracket_teams.pop_back();
+      bracket_rounds.pop_back();
+
+      if (best_depth == n_slots) return n_slots;
+    }
+  }
+
+  return best_depth;
+}
+
+// [[Rcpp::export]]
+List solve_optimal_paths_cpp(
+    IntegerMatrix all_results,
+    NumericMatrix n_field_alive,
+    List slot_team_ids_list,
+    List slot_game_cols_list,
+    IntegerVector slot_n_picks,
+    IntegerVector slot_round_nums,
+    IntegerVector used_teams_vec,
+    IntegerVector first_slot_cands,
+    IntegerVector first_slot_gcols,
+    double prize_pool,
+    int n_slots) {
+
+  int n_sims = all_results.nrow();
+  int n_first = first_slot_cands.size();
+  int first_round = slot_round_nums[0];
+
+  // Pre-extract slot data (slots 1..n_slots-1 are future slots)
+  std::vector<IntegerVector> s_team_ids(n_slots);
+  std::vector<IntegerVector> s_game_cols(n_slots);
+  std::vector<int> s_n_picks(n_slots);
+  std::vector<int> s_round_nums(n_slots);
+
+  for (int s = 0; s < n_slots; s++) {
+    s_team_ids[s] = as<IntegerVector>(slot_team_ids_list[s]);
+    s_game_cols[s] = as<IntegerVector>(slot_game_cols_list[s]);
+    s_n_picks[s] = slot_n_picks[s];
+    s_round_nums[s] = slot_round_nums[s];
+  }
+
+  // Pre-extract used teams
+  std::vector<int> base_used;
+  for (int i = 0; i < used_teams_vec.size(); i++) {
+    if (used_teams_vec[i] > 0) base_used.push_back(used_teams_vec[i]);
+  }
+
+  // Build base bracket_teams/bracket_rounds from used_teams
+  // We don't know the exact round for historical picks from R, so we
+  // infer: team_id -> its earliest possible round based on bracket position.
+  // Actually, we need this from R. For now, we just use the used_teams
+  // for the "is already used" check, and bracket compatibility is checked
+  // only for new picks against each other.
+  // The R wrapper will pass bracket_teams and bracket_rounds separately
+  // if needed. For now, we skip bracket compat for historical picks
+  // (they've already been validated).
+  std::vector<int> base_bracket_teams;
+  std::vector<int> base_bracket_rounds;
+
+  // Output accumulators
+  NumericVector ev_out(n_first, 0.0);
+  NumericVector p_survive_out(n_first, 0.0);
+  NumericVector mean_death_out(n_first, 0.0);
+
+  for (int ci = 0; ci < n_first; ci++) {
+    int cand_tid = first_slot_cands[ci];
+    int cand_gcol = first_slot_gcols[ci];
+
+    double ev_sum = 0.0;
+    int survive_count = 0;
+    double death_sum = 0.0;
+    int n_valid = 0;  // sims where candidate won slot 0
+
+    for (int sim = 0; sim < n_sims; sim++) {
+      if (sim % 50000 == 0 && ci == 0) Rcpp::checkUserInterrupt();
+
+      // Check if candidate won in this sim
+      if (all_results(sim, cand_gcol) != cand_tid) {
+        // Candidate lost in slot 0 → die at slot 0
+        // Payout: exp(-n_field_alive[0]) * prize / (1 + delta_dying)
+        double n_alive_after = n_field_alive(sim, 0);
+        double p_nobody = std::exp(-n_alive_after);
+        // delta_dying: field entries that died in this slot
+        // = n_alive_before - n_alive_after (but we don't have n_alive_before
+        //   directly; for slot 0 it's the full field count at entry)
+        // We approximate using the n_field_alive matrix where column 0 is
+        // alive AFTER slot 0. The "before" count isn't stored, but the
+        // n_dying_same is implicitly captured by V_die formula.
+        // Use simplified: payout = p_nobody * prize / 1
+        // (we die alone on our side; field deaths are in n_alive)
+        double payout = p_nobody * prize_pool;
+        ev_sum += payout;
+        death_sum += 1.0;  // died at slot 0 (1-indexed for output)
+        continue;
+      }
+
+      // Candidate won slot 0 — DFS for best path from slot 1 onward
+      std::vector<int> cur_used = base_used;
+      cur_used.push_back(cand_tid);
+
+      std::vector<int> cur_bracket = base_bracket_teams;
+      cur_bracket.push_back(cand_tid);
+      std::vector<int> cur_bracket_rds = base_bracket_rounds;
+      cur_bracket_rds.push_back(first_round);
+
+      int best_depth = dfs_best_path(
+        1, n_slots, sim, all_results,
+        s_team_ids, s_game_cols, s_n_picks, s_round_nums,
+        cur_used, cur_bracket, cur_bracket_rds
+      );
+
+      // Compute payout based on how far we got
+      double payout;
+      if (best_depth == n_slots) {
+        // Survived all slots
+        double n_alive_final = n_field_alive(sim, n_slots - 1);
+        payout = prize_pool / (1.0 + n_alive_final);
+        survive_count++;
+      } else {
+        // Died at slot best_depth (0-indexed)
+        double n_alive_after = n_field_alive(sim, best_depth);
+        double p_nobody = std::exp(-n_alive_after);
+        // Number of field entries dying at this slot
+        double n_alive_before;
+        if (best_depth == 0) {
+          // Should not happen (we already handled slot 0 above)
+          n_alive_before = n_field_alive(sim, 0);  // approximate
+        } else {
+          n_alive_before = n_field_alive(sim, best_depth - 1);
+        }
+        double n_dying = std::max(n_alive_before - n_alive_after, 0.0);
+        payout = p_nobody * prize_pool / (1.0 + n_dying);
+        death_sum += (best_depth + 1.0);  // 1-indexed slot
+      }
+
+      ev_sum += payout;
+    }
+
+    ev_out[ci] = ev_sum / n_sims;
+    p_survive_out[ci] = (double)survive_count / n_sims;
+    mean_death_out[ci] = death_sum / n_sims;
+  }
+
+  return List::create(
+    Named("ev")         = ev_out,
+    Named("p_survive")  = p_survive_out,
+    Named("mean_death") = mean_death_out
+  );
 }

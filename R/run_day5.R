@@ -38,6 +38,7 @@ source(file.path(script_dir, "scrape_splash_contests.R"))
 source(file.path(script_dir, "calibrate_win_prob.R"))
 source(file.path(script_dir, "entry_ownership_model.R"))
 source(file.path(script_dir, "entry_field_sim.R"))
+source(file.path(script_dir, "contest_mc_sim.R"))
 sourceCpp(file.path(script_dir, "..", "simulate_tourney.cpp"))
 
 # ==============================================================================
@@ -211,7 +212,7 @@ r2_d2_winners <- c(
   # ---- FILL IN SUNDAY R32 WINNERS HERE ----
   "St. John's",     # Game 34
   "UConn",          # Game 36
-  "Florida",        # Game 37
+  "Iowa",           # Game 37
   "Arizona",        # Game 41
   "Purdue",         # Game 44
   "Alabama",        # Game 46
@@ -277,7 +278,7 @@ cat(sprintf("\nCalibrated %d team ratings to R32+S16 closing lines\n",
 # ==============================================================================
 
 # Option A: Live scrape (requires fresh bearer token from Splash)
-bearer_token <- "PASTE_FRESH_BEARER_TOKEN_HERE"
+bearer_token <- "eyJraWQiOiJmMzRiN2YiLCJhbGciOiJIUzUxMiIsInR5cCI6IkpXVCJ9.eyJzd3QiOiJlNWVhNmM5YS0zNDg4LTRhMDQtOTA5ZS02YmVkNGUxNjEyNzMifQ.3aJ-YW4YRp2v9bJGpdQWS84oh1WKupWz9SyLOFCk2bcMhXdc9ebX71kbZLshAcK58Wd1n-2VSLdl4DFdaBYX3g"
 scrape <- scrape_all_splash(bearer_token)
 # saveRDS(scrape, file.path(script_dir, "..", "scrape_day5.rds"))
 
@@ -390,7 +391,8 @@ result <- run_optimizer(
   ownership_override = ownership_override,
   locked_teams       = locked_teams,
   sim_sample_size    = 50000,
-  entry_field_data   = entry_field_results
+  entry_field_data   = entry_field_results,
+  method             = "mc"
 )
 
 # ==============================================================================

@@ -1701,7 +1701,8 @@ optimize_today <- function(state, candidates, current_slot_id, sim, tw,
                             sim_sample_size = 100000,
                             field_sim_data = NULL,
                             locked_team_ids = integer(0),
-                            entry_field_data = NULL) {
+                            entry_field_data = NULL,
+                            method = "beam") {
   groups <- group_entries(state)
   if (nrow(groups) == 0) {
     cat("No alive entries to optimize.\n")
@@ -1763,6 +1764,116 @@ optimize_today <- function(state, candidates, current_slot_id, sim, tw,
   all_scores <- list()
   death_rd_cache <- list()  # keyed by "group_id:team_id" -> integer vector
   overall_start <- proc.time()[["elapsed"]]
+
+  if (method == "mc") {
+    # ====================================================================
+    # FORWARD-KNOWLEDGE MC SCORING
+    # For each group × each sim, find the optimal survivable path with
+    # full knowledge of sim outcomes. Resolves payouts against
+    # n_field_alive_matrix. No beam search, no V_die approximation.
+    # ====================================================================
+    cat("\n=== MC SCORING (forward-knowledge optimal paths) ===\n")
+
+    if (is.null(entry_field_data)) {
+      stop("method='mc' requires entry_field_data (entry-level field simulation)")
+    }
+
+    for (gi in seq_len(nrow(groups))) {
+      g <- groups[gi]
+      if (gi == 1 || g$contest_id != groups[gi - 1]$contest_id) {
+        n_contest_groups <- sum(groups$contest_id == g$contest_id)
+        cat(sprintf("\n--- Contest %s: %d groups, %d field ---\n",
+                    substr(g$contest_id, 1, 12), n_contest_groups, g$contest_size))
+      }
+
+      # Get entry-level field data for this contest
+      ct_entry <- entry_field_data[[g$contest_id]]
+      if (is.null(ct_entry)) {
+        cat(sprintf("  WARNING: No entry field data for contest %s, skipping\n",
+                    g$contest_id))
+        next
+      }
+      ct_n_alive_matrix <- ct_entry$n_alive_matrix[sample_idx, , drop = FALSE]
+
+      # Filter viable candidates for this group
+      avail_cids <- viable_cids[!viable_cids %in% g$used_teams[[1]]]
+
+      # Apply format-specific region constraints
+      group_format <- if ("format" %in% names(g)) g$format else "A"
+      if (group_format == "C" && grepl("R1_d2", current_slot_id)) {
+        used_tids <- g$used_teams[[1]]
+        if (length(used_tids) > 0) {
+          used_regions <- unique(teams_dt$region[used_tids])
+          allowed_regions <- setdiff(unique(teams_dt$region), used_regions)
+          if (length(allowed_regions) > 0) {
+            avail_cids <- avail_cids[teams_dt$region[avail_cids] %in% allowed_regions]
+          }
+        }
+      }
+
+      if (length(avail_cids) == 0) next
+
+      # Remove locked teams
+      if (length(locked_team_ids) > 0) {
+        avail_cids <- avail_cids[!avail_cids %in% locked_team_ids]
+      }
+
+      if (length(avail_cids) == 0) next
+
+      mc_start <- proc.time()[["elapsed"]]
+      mc_result <- mc_score_candidates(
+        group            = g,
+        current_slot_id  = current_slot_id,
+        sim              = sim,
+        teams_dt         = teams_dt,
+        sample_idx       = sample_idx,
+        n_field_alive_matrix = ct_n_alive_matrix,
+        viable_cids      = avail_cids,
+        format           = group_format
+      )
+      mc_elapsed <- proc.time()[["elapsed"]] - mc_start
+
+      if (nrow(mc_result) == 0) next
+
+      cat(sprintf("  Group %d/%d: %d candidates scored in %.1fs (top: %s=$%.2f)\n",
+                  gi, nrow(groups), nrow(mc_result), mc_elapsed,
+                  mc_result$team_name[which.max(mc_result$ev)],
+                  max(mc_result$ev)))
+
+      # Convert to all_scores format
+      for (k in seq_len(nrow(mc_result))) {
+        r <- mc_result[k]
+        score_row <- data.table(
+          group_id        = g$group_id,
+          contest_id      = g$contest_id,
+          n_entries       = g$n_entries,
+          team_name       = r$team_name,
+          team_id         = r$team_id,
+          ev              = r$ev,
+          ev_raw          = r$ev,
+          optionality     = NA_real_,
+          p_survive_today = r$p_survive_today,
+          p_win_contest   = r$p_win_contest,
+          mean_death_rd   = r$mean_death_rd,
+          slot1_extra_name = NA_character_,
+          group_id_orig   = g$group_id
+        )
+        all_scores[[length(all_scores) + 1]] <- score_row
+      }
+    }
+
+    total_elapsed <- proc.time()[["elapsed"]] - overall_start
+    if (total_elapsed < 60) {
+      time_str <- sprintf("%.1fs", total_elapsed)
+    } else {
+      time_str <- sprintf("%.1fm", total_elapsed / 60)
+    }
+    cat(sprintf("\n=== MC scoring complete in %s ===\n", time_str))
+
+  } else {
+  # ====================================================================
+  # BEAM SEARCH SCORING (original path)
+  # ====================================================================
 
   # Cache precomputed context per contest (groups in same contest share V_die/V_survive)
   ctx_cache <- list()
@@ -2077,6 +2188,8 @@ optimize_today <- function(state, candidates, current_slot_id, sim, tw,
     time_str <- sprintf("%.1fm", total_elapsed / 60)
   }
   cat(sprintf("\n=== Scoring complete in %s ===\n", time_str))
+
+  }  # end else (beam search path)
 
   scores <- rbindlist(all_scores)
 
@@ -2505,7 +2618,8 @@ run_optimizer <- function(sim_file = NULL, state_file = NULL, current_slot_id,
                            contests_df = NULL, sim_sample_size = 100000,
                            scrape_inputs = NULL, ownership_override = NULL,
                            contest_filter = NULL, locked_teams = NULL,
-                           entry_field_data = NULL) {
+                           entry_field_data = NULL,
+                           method = "beam") {
   pipeline_start <- proc.time()[["elapsed"]]
 
   field_sim_data <- NULL
@@ -2766,7 +2880,8 @@ run_optimizer <- function(sim_file = NULL, state_file = NULL, current_slot_id,
     ownership_by_slot, sim_sample_size = sim_sample_size,
     field_sim_data = field_sim_data,
     locked_team_ids = locked_team_ids,
-    entry_field_data = entry_field_data
+    entry_field_data = entry_field_data,
+    method = method
   )
 
   # Print recommendation
