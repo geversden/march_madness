@@ -10,7 +10,11 @@
 #         logit(P) = k * rating_diff
 # ==============================================================================
 
-script_dir <- tryCatch(dirname(sys.frame(1)$ofile), error = function(e) ".")
+script_dir <- tryCatch(dirname(sys.frame(1)$ofile), error = function(e) {
+  if (file.exists("R/splash_config.R")) "R"
+  else if (file.exists("splash_config.R")) "."
+  else stop("Cannot determine script_dir. Set working directory to the project root.")
+})
 
 YEARS <- 2021:2025
 
@@ -126,7 +130,7 @@ for (yr in YEARS) {
   cat(sprintf("--- %d ---\n", yr))
 
   # Load KenPom
-  kp_file <- file.path(script_dir, "kenpom_data", sprintf("kenpom_%d.csv", yr))
+  kp_file <- file.path(script_dir, "..", "kenpom_data", sprintf("kenpom_%d.csv", yr))
   if (!file.exists(kp_file)) { cat("  KenPom file not found, skipping\n"); next }
 
   kp <- read.csv(kp_file, stringsAsFactors = FALSE)
@@ -140,7 +144,7 @@ for (yr in YEARS) {
   cat(sprintf("  Loaded %d KenPom teams\n", length(kp_names)))
 
   # Load closing lines
-  cl_file <- file.path(script_dir, "closing_lines",
+  cl_file <- file.path(script_dir, "..", "closing_lines",
                         sprintf("ncaat_%d_closing_lines.csv", yr))
   if (!file.exists(cl_file)) { cat("  Closing lines file not found, skipping\n"); next }
 
@@ -315,3 +319,171 @@ cat(sprintf("\n==============================================================\n"
 cat(sprintf("  RECOMMENDATION: Update LOG_SCALE from %.4f to %.4f\n", current_k, round(k_no_int, 4)))
 cat(sprintf("  Based on %d NCAA Tournament games (2021-2025)\n", nrow(all_games)))
 cat(sprintf("==============================================================\n"))
+
+# ==============================================================================
+# CALIBRATE INDIVIDUAL TEAM RATINGS TO CLOSING LINES
+#
+# Given KenPom ratings as a prior and pairwise closing-line win probabilities,
+# solve for adjusted ratings that:
+#   (a) reproduce the market lines via logistic(k * (rA - rB))
+#   (b) stay close to KenPom (ridge penalty)
+#
+# Use case: after R64, we have R32 closing lines for 16 games involving 32
+# surviving teams. We want ratings calibrated to the market for simulating
+# R3+ matchups where no lines exist yet.
+#
+# The system is underdetermined (16 equations, 32 unknowns) so the ridge
+# penalty toward KenPom keeps the solution well-identified.
+# ==============================================================================
+
+#' Calibrate team ratings to match closing-line win probabilities
+#'
+#' @param teams_dt Data frame with columns: team_id, name, rating (KenPom)
+#' @param closing_lines_csv Path to closing lines CSV (home_team, away_team,
+#'        date, home_spread, home_win_prob)
+#' @param team_names_csv Path to team_names.csv dictionary
+#' @param log_scale Logistic scale parameter (k in P = 1/(1+exp(-k*diff)))
+#' @param lambda Ridge penalty weight (higher = stay closer to KenPom)
+#' @param round_dates Character vector of dates to include (e.g., R32 dates).
+#'        If NULL, uses all games in the CSV.
+#' @return Updated teams_dt with calibrated ratings in the `rating` column.
+#'         Also adds `rating_kenpom` (original) and `rating_delta` columns.
+calibrate_ratings_to_lines <- function(teams_dt, closing_lines_csv,
+                                       team_names_csv = "team_names.csv",
+                                       log_scale = 0.0917,
+                                       lambda = 2.0,
+                                       round_dates = NULL) {
+
+  # --- Load closing lines ---
+  cl <- read.csv(closing_lines_csv, stringsAsFactors = FALSE)
+  if (!is.null(round_dates)) {
+    cl <- cl[cl$date %in% round_dates, ]
+  }
+  cl <- cl[!is.na(cl$home_win_prob), ]
+  if (nrow(cl) == 0) stop("No closing lines with win probs found for the specified dates")
+
+  cat(sprintf("Calibrating ratings from %d closing-line games\n", nrow(cl)))
+
+  # --- Build name mapping: closing_lines_name -> bracket_name ---
+  td <- read.csv(team_names_csv, stringsAsFactors = FALSE)
+  cl_to_bracket <- setNames(td$bracket_name, td$closing_lines_name)
+
+  resolve_cl <- function(cl_name) {
+    if (cl_name %in% names(cl_to_bracket)) return(cl_to_bracket[[cl_name]])
+    # Prefix match against bracket names (longest first)
+    sorted <- teams_dt$name[order(nchar(teams_dt$name), decreasing = TRUE)]
+    for (bn in sorted) {
+      if (startsWith(cl_name, bn)) return(bn)
+    }
+    NA_character_
+  }
+
+  cl$home_bracket <- sapply(cl$home_team, resolve_cl, USE.NAMES = FALSE)
+  cl$away_bracket <- sapply(cl$away_team, resolve_cl, USE.NAMES = FALSE)
+
+  # Drop unmatched
+  unmatched_home <- cl$home_team[is.na(cl$home_bracket)]
+  unmatched_away <- cl$away_team[is.na(cl$away_bracket)]
+  if (length(unmatched_home) > 0)
+    cat(sprintf("  WARNING: unmatched home teams: %s\n",
+                paste(unique(unmatched_home), collapse = ", ")))
+  if (length(unmatched_away) > 0)
+    cat(sprintf("  WARNING: unmatched away teams: %s\n",
+                paste(unique(unmatched_away), collapse = ", ")))
+  cl <- cl[!is.na(cl$home_bracket) & !is.na(cl$away_bracket), ]
+
+  if (nrow(cl) == 0) stop("No games remaining after name matching")
+
+  # --- Map to team indices ---
+  name_to_idx <- setNames(seq_len(nrow(teams_dt)), teams_dt$name)
+  cl$home_idx <- name_to_idx[cl$home_bracket]
+  cl$away_idx <- name_to_idx[cl$away_bracket]
+  cl <- cl[!is.na(cl$home_idx) & !is.na(cl$away_idx), ]
+
+  cat(sprintf("  Matched %d games to bracket teams\n", nrow(cl)))
+
+  # --- Identify teams involved in at least one game ---
+  involved <- sort(unique(c(cl$home_idx, cl$away_idx)))
+  n_involved <- length(involved)
+  # Map global index -> local optimization index
+  global_to_local <- setNames(seq_along(involved), involved)
+
+  base_ratings <- teams_dt$rating[involved]
+
+  # --- Objective: sum of squared logistic errors + ridge penalty ---
+  objective <- function(delta) {
+    adj <- base_ratings + delta
+    loss <- 0
+    for (i in seq_len(nrow(cl))) {
+      li <- global_to_local[[as.character(cl$home_idx[i])]]
+      ri <- global_to_local[[as.character(cl$away_idx[i])]]
+      pred <- 1 / (1 + exp(-log_scale * (adj[li] - adj[ri])))
+      loss <- loss + (pred - cl$home_win_prob[i])^2
+    }
+    # Ridge penalty: pull toward KenPom
+    loss + lambda * sum(delta^2)
+  }
+
+  # --- Gradient for faster convergence ---
+  gradient <- function(delta) {
+    adj <- base_ratings + delta
+    grad <- 2 * lambda * delta  # ridge gradient
+
+    for (i in seq_len(nrow(cl))) {
+      li <- global_to_local[[as.character(cl$home_idx[i])]]
+      ri <- global_to_local[[as.character(cl$away_idx[i])]]
+      diff <- adj[li] - adj[ri]
+      pred <- 1 / (1 + exp(-log_scale * diff))
+      resid <- pred - cl$home_win_prob[i]
+      # d/d_delta_li = 2 * resid * pred * (1-pred) * log_scale
+      dp <- 2 * resid * pred * (1 - pred) * log_scale
+      grad[li] <- grad[li] + dp
+      grad[ri] <- grad[ri] - dp
+    }
+    grad
+  }
+
+  # --- Optimize ---
+  result <- optim(
+    par     = rep(0, n_involved),
+    fn      = objective,
+    gr      = gradient,
+    method  = "L-BFGS-B",
+    control = list(maxit = 1000, factr = 1e7)
+  )
+
+  if (result$convergence != 0)
+    warning("Calibration optimizer did not converge: ", result$message)
+
+  delta <- result$par
+
+  # --- Apply calibrated ratings ---
+  teams_dt$rating_kenpom <- teams_dt$rating
+  teams_dt$rating_delta  <- 0
+  teams_dt$rating_delta[involved] <- delta
+  teams_dt$rating[involved] <- teams_dt$rating[involved] + delta
+
+  # --- Report ---
+  cat("\nCalibration results:\n")
+  cat(sprintf("  Final loss: %.6f (%.4f avg sq error per game + %.4f ridge)\n",
+              result$value,
+              result$value - lambda * sum(delta^2),
+              lambda * sum(delta^2)))
+
+  for (i in seq_len(nrow(cl))) {
+    li <- global_to_local[[as.character(cl$home_idx[i])]]
+    ri <- global_to_local[[as.character(cl$away_idx[i])]]
+    adj_home <- base_ratings[li] + delta[li]
+    adj_away <- base_ratings[ri] + delta[ri]
+    pred <- 1 / (1 + exp(-log_scale * (adj_home - adj_away)))
+    cat(sprintf("  %-20s vs %-20s  market=%.1f%%  model=%.1f%%  (delta: %+.2f vs %+.2f)\n",
+                cl$home_bracket[i], cl$away_bracket[i],
+                100 * cl$home_win_prob[i], 100 * pred,
+                delta[li], delta[ri]))
+  }
+
+  cat(sprintf("\n  Max |delta|: %.3f  Mean |delta|: %.3f\n",
+              max(abs(delta)), mean(abs(delta))))
+
+  teams_dt
+}

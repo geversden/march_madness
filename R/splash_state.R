@@ -235,6 +235,9 @@ group_entries <- function(state) {
   pick_cols <- all_slot_cols()
   pick_cols <- intersect(pick_cols, names(alive))
 
+  # Ensure contest_name column exists
+  if (!"contest_name" %in% names(alive)) alive[, contest_name := NA_character_]
+
   # Create a hash of used teams for grouping
   alive[, used_hash := apply(.SD, 1, function(row) {
     vals <- sort(row[!is.na(row)])
@@ -251,6 +254,7 @@ group_entries <- function(state) {
     contest_size = contest_size[1],
     entry_fee    = entry_fee[1],
     prize_pool   = prize_pool[1],
+    contest_name = contest_name[1],
     used_teams   = list({
       parts <- strsplit(used_hash[1], ",")[[1]]
       parts <- parts[nzchar(parts)]

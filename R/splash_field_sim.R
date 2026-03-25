@@ -17,6 +17,17 @@
 
 library(data.table)
 
+# Bracket utility: earliest round two teams could meet (if not already defined)
+if (!exists("earliest_meeting_round", mode = "function")) {
+  earliest_meeting_round <- function(t1, t2) {
+    p1 <- t1 - 1L; p2 <- t2 - 1L
+    for (r in 1:6) {
+      if (bitwShiftR(p1, r) == bitwShiftR(p2, r)) return(r)
+    }
+    7L
+  }
+}
+
 # ==============================================================================
 # STEP 5a: GROUP FIELD ENTRIES
 # ==============================================================================
@@ -79,11 +90,19 @@ group_field_entries <- function(field_avail) {
 #'   team_ids:   IntegerVector of candidate team_ids
 #'   game_cols:  IntegerVector of 0-indexed game columns per candidate
 predict_field_group_picks <- function(field_groups, slot_id, teams_dt,
-                                       sim_matrix, contest_size) {
+                                       sim_matrix, contest_size,
+                                       calib_params = NULL,
+                                       ownership_override = NULL,
+                                       pick_against_ramp = NULL) {
   slot <- get_slot(slot_id)
   game_idxs <- slot$game_indices
   round_num <- slot$round_num
   n_groups <- nrow(field_groups)
+
+  # Load calibrated params if not provided
+  if (is.null(calib_params)) {
+    calib_params <- tryCatch(load_calibrated_params(), error = function(e) NULL)
+  }
 
   # --- Get candidate teams for this slot ---
   if (round_num == 1) {
@@ -133,10 +152,13 @@ predict_field_group_picks <- function(field_groups, slot_id, teams_dt,
   max_champ <- max(champ_probs, na.rm = TRUE)
   fv <- if (max_champ > 0) champ_probs / max_champ else rep(0, n_cand)
 
-  # --- Save strength scaled by contest size ---
-  # Larger contests → field values chalk more, saves more
-  save_strengths <- c(0.60, 0.50, 0.35, 0.15, 0.0, 0.0)
-  save_strength <- save_strengths[min(round_num, length(save_strengths))]
+  # --- Save strength from calibration ---
+  if (!is.null(calib_params) && !is.null(calib_params$save_strengths)) {
+    save_strength <- calib_params$save_strengths[min(round_num, length(calib_params$save_strengths))]
+  } else {
+    save_strengths <- c(0.60, 0.50, 0.35, 0.15, 0.0, 0.0)
+    save_strength <- save_strengths[min(round_num, length(save_strengths))]
+  }
 
   # --- Path viability boost ---
   boost_val <- PATH_VIABILITY_BOOST[[as.character(round_num)]]
@@ -156,14 +178,43 @@ predict_field_group_picks <- function(field_groups, slot_id, teams_dt,
   }
 
   # --- Build probability matrix: n_groups x n_candidates ---
-  beta_wp <- 4.0  # softmax temperature for win prob
+  # Get beta_wp from calibration (keyed by round: R1, R2, S16, E8plus)
+  round_key <- c("R1", "R2", "S16", "E8plus", "E8plus", "E8plus")[min(round_num, 6)]
+  if (!is.null(calib_params) && !is.null(calib_params$beta_wp)) {
+    beta_wp <- calib_params$beta_wp[round_key]
+    if (is.na(beta_wp)) beta_wp <- 6.84  # fallback to R1 calibrated value
+  } else {
+    beta_wp <- 6.84  # uncalibrated fallback
+  }
+  # Allow per-round override via options (e.g., options(splash.beta_wp_S16 = 3.5))
+  beta_override <- getOption(paste0("splash.beta_wp_", round_key), NULL)
+  if (!is.null(beta_override)) beta_wp <- beta_override
   pick_probs <- matrix(0.0, nrow = n_groups, ncol = n_cand)
+
+  # If ownership_override provided, build base log-attractiveness from it
+  # ownership_override is a named numeric vector: team_name -> ownership fraction
+  has_override <- !is.null(ownership_override) && length(ownership_override) > 0
+  if (has_override) {
+    override_probs <- numeric(n_cand)
+    for (i in seq_len(n_cand)) {
+      tname <- candidates$name[i]
+      if (tname %in% names(ownership_override)) {
+        override_probs[i] <- ownership_override[[tname]]
+      }
+    }
+    # Convert to log scale (add small epsilon to avoid log(0))
+    override_log <- log(pmax(override_probs, 1e-8))
+  }
 
   for (grp in seq_len(n_groups)) {
     used <- field_groups$used_teams[[grp]]
 
-    # Base attractiveness (before availability/viability adjustments)
-    log_attract <- beta_wp * win_probs - save_strength * fv
+    # Base attractiveness (copy to avoid mutating shared vector)
+    if (has_override) {
+      log_attract <- override_log + 0  # force copy
+    } else {
+      log_attract <- beta_wp * win_probs - save_strength * fv
+    }
 
     for (i in seq_len(n_cand)) {
       tid <- candidates$team_id[i]
@@ -227,6 +278,32 @@ predict_field_group_picks <- function(field_groups, slot_id, teams_dt,
       }
     }
 
+    # Pick-against boost: field entries gravitate toward eliminating their
+    # used teams from the bracket (picking the opponent of a used team).
+    # This opens future paths — a dominant behavioral factor in R2+ when
+    # entries have 2-10 used teams from multi-pick formats.
+    if (is.null(pick_against_ramp)) {
+      pa_ramp_vec <- c(0, 0.3, 0.5, 0.8, 1.0, 1.0)  # by round_num
+    } else {
+      pa_ramp_vec <- pick_against_ramp
+    }
+    pa_ramp <- pa_ramp_vec[min(round_num, length(pa_ramp_vec))]
+
+    if (pa_ramp > 0 && length(used) > 0) {
+      for (i in seq_len(n_cand)) {
+        if (is.infinite(log_attract[i])) next
+        tid <- candidates$team_id[i]
+        for (ut in used) {
+          if (earliest_meeting_round(tid, ut) == round_num) {
+            # This candidate directly plays against a used team this round —
+            # if they win, the used team is eliminated, opening future paths
+            log_attract[i] <- log_attract[i] + pa_ramp * beta_wp * 0.4
+            break  # one bonus per candidate
+          }
+        }
+      }
+    }
+
     # Handle all-zeroed case (dead end or all non-viable)
     finite_mask <- is.finite(log_attract)
     if (!any(finite_mask)) {
@@ -270,11 +347,21 @@ predict_field_group_picks <- function(field_groups, slot_id, teams_dt,
 #' @param contest_size Total entries in the contest
 #' @return IntegerMatrix (n_sims x n_groups): death slot (1-indexed),
 #'   or n_slots+1 if survived all
-run_field_sim <- function(field_groups, sim, remaining_slots, contest_size) {
+run_field_sim <- function(field_groups, sim, remaining_slots, contest_size,
+                          ownership_override = NULL, current_slot_id = NULL,
+                          field_sim_n = 200000L) {
   n_groups <- nrow(field_groups)
   n_slots <- length(remaining_slots)
-  sim_matrix <- sim$all_results
   teams_dt <- sim$teams
+
+  # Subsample sims for field sim speed (200K default instead of 2M)
+  full_n <- nrow(sim$all_results)
+  if (full_n > field_sim_n) {
+    field_idx <- sort(sample.int(full_n, field_sim_n))
+    sim_matrix <- sim$all_results[field_idx, , drop = FALSE]
+  } else {
+    sim_matrix <- sim$all_results
+  }
 
   if (n_groups == 0 || n_slots == 0) {
     return(matrix(n_slots + 1L, nrow = nrow(sim_matrix), ncol = max(n_groups, 1)))
@@ -283,6 +370,9 @@ run_field_sim <- function(field_groups, sim, remaining_slots, contest_size) {
   cat(sprintf("  Running field sim: %d groups x %d slots x %d sims...\n",
               n_groups, n_slots, nrow(sim_matrix)))
 
+  # Load calibrated params once (not per-slot)
+  calib_params <- tryCatch(load_calibrated_params(), error = function(e) NULL)
+
   # Build probability matrices and game mappings per slot
   all_team_ids <- list()
   all_game_cols <- list()
@@ -290,8 +380,14 @@ run_field_sim <- function(field_groups, sim, remaining_slots, contest_size) {
 
   for (s in seq_along(remaining_slots)) {
     slot_id <- remaining_slots[s]
+    # Use ownership override only for the current slot
+    slot_own <- if (!is.null(ownership_override) && slot_id == current_slot_id) {
+      ownership_override
+    } else NULL
     preds <- predict_field_group_picks(field_groups, slot_id, teams_dt,
-                                        sim_matrix, contest_size)
+                                        sim_matrix, contest_size,
+                                        calib_params = calib_params,
+                                        ownership_override = slot_own)
     all_team_ids[[s]] <- preds$team_ids
     all_game_cols[[s]] <- preds$game_cols
     all_pick_probs[[s]] <- preds$pick_probs
@@ -328,14 +424,17 @@ run_field_sim <- function(field_groups, sim, remaining_slots, contest_size) {
 # STEP 5d: BUILD SURVIVAL CURVES
 # ==============================================================================
 
-#' Convert death_round matrix into survival curves for the optimizer
+#' Convert death_round matrix into averaged survival probabilities
+#'
+#' Returns AVERAGE probabilities across sims (not per-sim vectors).
+#' This is much faster and uses far less memory than per-sim curves.
 #'
 #' @param death_matrix IntegerMatrix (n_sims x n_groups) from run_field_sim()
 #' @param field_groups data.table with group_id, n_entries
 #' @param n_slots Number of remaining slots simulated
 #' @return List with:
-#'   field_dies_slot: matrix (n_sims x n_slots) — weighted fraction dying in each slot
-#'   p_field_survives_all: numeric vector (n_sims) — weighted fraction surviving everything
+#'   p_field_dies_slot: numeric vector (n_slots) — avg weighted fraction dying per slot
+#'   p_field_survives_all: scalar — avg probability field survives everything
 build_field_survival_curves <- function(death_matrix, field_groups, n_slots) {
   n_sims <- nrow(death_matrix)
   n_groups <- ncol(death_matrix)
@@ -344,31 +443,27 @@ build_field_survival_curves <- function(death_matrix, field_groups, n_slots) {
 
   if (total_weight == 0) {
     return(list(
-      field_dies_slot       = matrix(0, nrow = n_sims, ncol = n_slots),
-      p_field_survives_all  = rep(1, n_sims)
+      field_dies_slot      = rep(0, n_slots),
+      p_field_survives_all = 1.0
     ))
   }
 
-  # field_dies_slot[sim, slot] = weighted fraction of field dying in exactly slot s
-  field_dies_slot <- matrix(0.0, nrow = n_sims, ncol = n_slots)
-  p_field_survives_all <- numeric(n_sims)
+  # Averaged across sims: weighted fraction of field dying per slot
+  field_dies_slot <- numeric(n_slots)
+  p_field_survives_all <- 0.0
 
-  for (sim in seq_len(n_sims)) {
-    for (grp in seq_len(n_groups)) {
-      d <- death_matrix[sim, grp]
-      w <- weights[grp] / total_weight
-
-      if (d <= n_slots) {
-        field_dies_slot[sim, d] <- field_dies_slot[sim, d] + w
-      } else {
-        p_field_survives_all[sim] <- p_field_survives_all[sim] + w
-      }
+  for (grp in seq_len(n_groups)) {
+    w <- weights[grp] / total_weight
+    deaths <- death_matrix[, grp]
+    for (s in seq_len(n_slots)) {
+      field_dies_slot[s] <- field_dies_slot[s] + w * mean(deaths == s)
     }
+    p_field_survives_all <- p_field_survives_all + w * mean(deaths > n_slots)
   }
 
   list(
-    field_dies_slot       = field_dies_slot,
-    p_field_survives_all  = p_field_survives_all
+    field_dies_slot      = field_dies_slot,
+    p_field_survives_all = p_field_survives_all
   )
 }
 
@@ -383,7 +478,8 @@ build_field_survival_curves <- function(death_matrix, field_groups, n_slots) {
 #' @param remaining_slots Character vector of remaining slot IDs
 #' @param contest_size Total entries in the contest
 #' @return List with field_groups, death_matrix, survival_curves
-run_contest_field_sim <- function(field_avail, sim, remaining_slots, contest_size) {
+run_contest_field_sim <- function(field_avail, sim, remaining_slots, contest_size,
+                                   ownership_override = NULL, current_slot_id = NULL) {
   # Group field entries
   field_groups <- group_field_entries(field_avail)
 
@@ -394,14 +490,16 @@ run_contest_field_sim <- function(field_avail, sim, remaining_slots, contest_siz
       field_groups    = field_groups,
       death_matrix    = matrix(n_slots + 1L, nrow = n_sims, ncol = 0),
       survival_curves = list(
-        field_dies_slot      = matrix(0, nrow = n_sims, ncol = n_slots),
-        p_field_survives_all = rep(1, n_sims)
+        field_dies_slot      = rep(0, n_slots),
+        p_field_survives_all = 1.0
       )
     ))
   }
 
   # Run simulation
-  death_matrix <- run_field_sim(field_groups, sim, remaining_slots, contest_size)
+  death_matrix <- run_field_sim(field_groups, sim, remaining_slots, contest_size,
+                                ownership_override = ownership_override,
+                                current_slot_id = current_slot_id)
 
   # Build curves
   survival_curves <- build_field_survival_curves(

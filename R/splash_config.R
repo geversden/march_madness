@@ -138,11 +138,11 @@ FORMAT_DEFS <- list(
     total_picks = 10
   ),
   C = list(
-    label = "2/day R1+R2, E8 combined (4-4-2-2-1-1)",
+    label = "2/day R1, 1/day R2+, E8 combined (4-2-2-2-1-1)",
     slot_order = c("R1_d1", "R1_d2", "R2_d1", "R2_d2",
                    "S16_d1", "S16_d2", "E8", "FF", "CHAMP"),
-    n_picks_override = list(R1_d1 = 2L, R1_d2 = 2L, R2_d1 = 2L, R2_d2 = 2L),
-    total_picks = 14
+    n_picks_override = list(R1_d1 = 2L, R1_d2 = 2L),
+    total_picks = 12
   )
 )
 
@@ -265,8 +265,8 @@ SPLASH_SLOTS$R2_d2$game_indices <- R32_SUN_GAMES
 # Below is a reasonable default (East/South Thu, West/Midwest Fri)
 # but should be updated once the NCAA publishes the S16 schedule.
 
-S16_THU_GAMES <- c(51, 52, 53, 54)  # West + South (update when schedule announced)
-S16_FRI_GAMES <- c(49, 50, 55, 56)  # East + Midwest (update when schedule announced)
+S16_THU_GAMES <- c(51, 52, 53, 54)  # South (Houston) + West (San Jose) — Thu Mar 26
+S16_FRI_GAMES <- c(49, 50, 55, 56)  # East (Washington DC) + Midwest (Chicago) — Fri Mar 27
 
 SPLASH_SLOTS$S16_d1$game_indices <- S16_THU_GAMES
 SPLASH_SLOTS$S16_d2$game_indices <- S16_FRI_GAMES
@@ -279,10 +279,9 @@ SPLASH_SLOTS$S16_d2$game_indices <- S16_FRI_GAMES
 # E8 game 59 <- S16 games (53,54) -> West region champion matchup
 # E8 game 60 <- S16 games (55,56) -> Midwest region champion matchup
 #
-# Default: East+South on Sat (57,58), West+Midwest on Sun (59,60)
-# UPDATE when NCAA publishes E8 schedule.
-E8_SAT_GAMES <- c(58, 59)
-E8_SUN_GAMES <- c(57, 60)
+# South + West on Sat (58,59), East + Midwest on Sun (57,60)
+E8_SAT_GAMES <- c(58, 59)  # South (Houston) + West (San Jose) — Sat Mar 28
+E8_SUN_GAMES <- c(57, 60)  # East (Washington DC) + Midwest (Chicago) — Sun Mar 29
 
 SPLASH_SLOTS$E8_d1$game_indices <- E8_SAT_GAMES
 SPLASH_SLOTS$E8_d2$game_indices <- E8_SUN_GAMES
@@ -360,7 +359,9 @@ slot_col_name <- function(slot_id) {
 
 #' Get all slot column names (superset across all formats)
 all_slot_cols <- function() {
-  sapply(ALL_SLOT_IDS, slot_col_name, USE.NAMES = FALSE)
+  base <- sapply(ALL_SLOT_IDS, slot_col_name, USE.NAMES = FALSE)
+  # Include _b columns for multi-pick slots (Format C R1, E8 combined)
+  c(base, paste0(base, "_b"))
 }
 
 #' Get slot column names for a specific format
