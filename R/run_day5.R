@@ -211,7 +211,7 @@ r2_d2_winners <- c(
   # ---- FILL IN SUNDAY R32 WINNERS HERE ----
   "St. John's",     # Game 34
   "UConn",          # Game 36
-  "Florida",        # Game 37
+  "Iowa",           # Game 37
   "Arizona",        # Game 41
   "Purdue",         # Game 44
   "Alabama",        # Game 46
