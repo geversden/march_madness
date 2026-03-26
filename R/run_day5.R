@@ -392,7 +392,8 @@ result <- run_optimizer(
   locked_teams       = locked_teams,
   sim_sample_size    = 50000,
   entry_field_data   = entry_field_results,
-  method             = "mc"
+  method             = "mc",
+  diversity_exp      = 0.3
 )
 
 # ==============================================================================

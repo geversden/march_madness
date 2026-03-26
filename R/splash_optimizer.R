@@ -1702,7 +1702,8 @@ optimize_today <- function(state, candidates, current_slot_id, sim, tw,
                             field_sim_data = NULL,
                             locked_team_ids = integer(0),
                             entry_field_data = NULL,
-                            method = "beam") {
+                            method = "beam",
+                            diversity_exp = 0) {
   groups <- group_entries(state)
   if (nrow(groups) == 0) {
     cat("No alive entries to optimize.\n")
@@ -2310,166 +2311,178 @@ optimize_today <- function(state, candidates, current_slot_id, sim, tw,
     }
   }
 
-# --- Greedy assignment (Marginal EV Maximization) ---
+# --- Greedy Sim-Based Portfolio Allocator ---
+  # For each entry (one at a time), pick the candidate with highest marginal EV
+  # given all previously assigned entries. Uses per-sim death_rounds from MC cache.
   allocation_list <- list()
-  cat("\n--- Running Portfolio Diversification Allocator ---\n")
+  n_sims_alloc <- length(sample_idx)
 
-  # ---- Collect all groups per contest for joint allocation ----
-  contest_groups <- list()
-  for (gi in seq_len(nrow(groups))) {
-    g <- groups[gi]
-    g_scores <- scores[group_id == g$group_id]
-    if (nrow(g_scores) == 0) next
-    setorder(g_scores, -ev)
+  cat(sprintf("\n--- Running Greedy Sim-Based Portfolio Allocator (diversity_exp=%.2f) ---\n", diversity_exp))
 
-    cid <- g$contest_id
-    if (is.null(contest_groups[[cid]])) {
-      contest_groups[[cid]] <- list(groups = list(), scores = list())
-    }
-    contest_groups[[cid]]$groups[[length(contest_groups[[cid]]$groups) + 1]] <- g
-    contest_groups[[cid]]$scores[[length(contest_groups[[cid]]$scores) + 1]] <- g_scores
+  # Check that death_rd_cache is populated
+  if (length(death_rd_cache) == 0) {
+    cat("  WARNING: death_rd_cache is empty — C++ may not have been recompiled.\n")
+    cat("  Falling back to standalone EV (no cannibalization adjustment).\n")
   }
 
-  for (cid in names(contest_groups)) {
-    cg <- contest_groups[[cid]]
-    total_entries <- sum(sapply(cg$groups, function(g) g$n_entries))
+  contest_ids <- unique(groups$contest_id)
+  for (cid in contest_ids) {
+    ct_groups <- groups[contest_id == cid]
+    ct_scores <- scores[contest_id == cid]
+    if (nrow(ct_groups) == 0 || nrow(ct_scores) == 0) next
 
-    # Combine all unique candidates across groups in this contest
-    all_cand <- unique(rbindlist(cg$scores)[, .(team_name, team_id, ev,
-      p_survive_today, p_win_contest, slot1_extra_name)])
-    setorder(all_cand, -ev)
+    prize_pool <- ct_groups$prize_pool[1]
+    total_entries <- sum(ct_groups$n_entries)
 
-    # Keep top candidates (enough for good diversification)
-    top_viable <- min(20, sum(all_cand$ev > 0.01))
-    if (top_viable == 0) top_viable <- 1
-    all_cand <- all_cand[1:top_viable]
+    # Get per-sim field survivors for this contest (aligned with sample_idx)
+    ct_entry <- entry_field_data[[cid]]
+    if (!is.null(ct_entry) && !is.null(ct_entry$n_alive_matrix)) {
+      n_field_final <- as.integer(round(ct_entry$n_alive_matrix[sample_idx, ncol(ct_entry$n_alive_matrix)]))
+    } else {
+      cat(sprintf("  WARNING: no entry_field_data for contest %s, skipping\n", substr(cid, 1, 12)))
+      next
+    }
 
-    cat(sprintf("  Contest %s: %d entries, %d groups, %d viable candidates\n",
-                substr(cid, 1, 12), total_entries, length(cg$groups), nrow(all_cand)))
-
-    # ---- Allocate per group, but with portfolio-wide concentration penalty ----
-    # Track how many entries are already assigned to each team across ALL groups
-    portfolio_counts <- setNames(rep(0L, nrow(all_cand)), all_cand$team_name)
-
-    # Path diversity: track "team:used_teams_hash" -> count to penalize
-    # entries with the same used_teams all picking the same candidate
-    path_diversity_weight <- 3.0
-    path_counts <- list()
-
-    for (gi_idx in seq_along(cg$groups)) {
-      g <- cg$groups[[gi_idx]]
-      g_scores <- cg$scores[[gi_idx]]
-      n_ent <- g$n_entries
-
-      # Filter to candidates available for this group (not in used_teams)
-      avail_mask <- !g_scores$team_id %in% g$used_teams[[1]]
-      g_avail <- g_scores[avail_mask]
-      if (nrow(g_avail) == 0) {
-        g_avail <- g_scores[1]  # fallback
-      }
-      setorder(g_avail, -ev)
-
-      # Keep top candidates for this group
-      g_top_n <- min(8, nrow(g_avail))
-      g_top <- g_avail[1:g_top_n]
-
-      if (n_ent <= 1 || g_top_n <= 1) {
-        # Small group: just pick the best
-        best <- g_top[1]
-        allocation_list[[length(allocation_list) + 1]] <- data.table(
-          contest_id      = g$contest_id,
-          group_id        = g$group_id,
-          team_name       = best$team_name,
-          team_id         = best$team_id,
-          n_assigned      = n_ent,
-          ev              = best$ev,
-          p_survive_today = best$p_survive_today,
-          p_win_contest   = best$p_win_contest,
-          slot1_extra_name = best$slot1_extra_name,
-          used_teams      = list(g$used_teams[[1]])
+    # Expand groups into individual entry assignment slots, sorted by best standalone EV
+    entry_slots <- list()
+    for (gi in seq_len(nrow(ct_groups))) {
+      g <- ct_groups[gi]
+      g_scores <- ct_scores[group_id == g$group_id]
+      if (nrow(g_scores) == 0) next
+      best_ev <- max(g_scores$ev)
+      for (e in seq_len(g$n_entries)) {
+        entry_slots[[length(entry_slots) + 1]] <- list(
+          group = g, scores = g_scores, best_ev = best_ev
         )
-        portfolio_counts[best$team_name] <- portfolio_counts[best$team_name] + n_ent
-        ut_hash_small <- paste(sort(g$used_teams[[1]]), collapse = ",")
-        path_key_small <- paste0(best$team_name, ":", ut_hash_small)
-        path_counts[[path_key_small]] <- (path_counts[[path_key_small]] %||% 0L) + n_ent
-        next
-      }
-
-      # ---- Proportional allocation based on EV with concentration penalty ----
-      # Target: spread entries proportional to EV^alpha, penalized by existing exposure
-      # Alpha < 1 flattens distribution (more diversification)
-      alpha <- 2.5  # Tunable: higher = more concentration on top EV teams
-      concentration_penalty <- 0.5  # How much to penalize already-heavy teams
-
-      base_weights <- pmax(g_top$ev, 0) ^ alpha
-      # Penalize teams that already have many entries in the portfolio
-      for (k in seq_len(g_top_n)) {
-        tn <- g_top$team_name[k]
-        existing <- portfolio_counts[tn]
-        if (!is.na(existing) && existing > 0) {
-          # Decay weight by factor of (1 / (1 + penalty * existing_fraction))
-          existing_frac <- existing / max(total_entries, 1)
-          base_weights[k] <- base_weights[k] / (1 + concentration_penalty * existing / 5)
-        }
-      }
-
-      # Path diversity: penalize assigning entries with the same used_teams
-      # to the same candidate — they would share identical future paths
-      ut_hash <- paste(sort(g$used_teams[[1]]), collapse = ",")
-      for (k in seq_len(g_top_n)) {
-        path_key <- paste0(g_top$team_name[k], ":", ut_hash)
-        path_existing <- path_counts[[path_key]]
-        if (!is.null(path_existing) && path_existing > 0) {
-          base_weights[k] <- base_weights[k] /
-            (1 + path_diversity_weight * path_existing / max(n_ent, 1))
-        }
-      }
-
-      if (sum(base_weights) == 0) base_weights <- rep(1, g_top_n)
-      target_frac <- base_weights / sum(base_weights)
-
-      # Convert fractions to integer allocations (largest remainder method)
-      raw_alloc <- target_frac * n_ent
-      floor_alloc <- floor(raw_alloc)
-      remainders <- raw_alloc - floor_alloc
-      leftover <- n_ent - sum(floor_alloc)
-      if (leftover > 0) {
-        top_rem <- order(remainders, decreasing = TRUE)[1:leftover]
-        floor_alloc[top_rem] <- floor_alloc[top_rem] + 1L
-      }
-
-      # Append non-zero allocations
-      for (k in seq_len(g_top_n)) {
-        if (floor_alloc[k] > 0) {
-          allocation_list[[length(allocation_list) + 1]] <- data.table(
-            contest_id      = g$contest_id,
-            group_id        = g$group_id,
-            team_name       = g_top$team_name[k],
-            team_id         = g_top$team_id[k],
-            n_assigned      = as.integer(floor_alloc[k]),
-            ev              = g_top$ev[k],
-            p_survive_today = g_top$p_survive_today[k],
-            p_win_contest   = g_top$p_win_contest[k],
-            slot1_extra_name = g_top$slot1_extra_name[k],
-            used_teams      = list(g$used_teams[[1]])
-          )
-          tn <- g_top$team_name[k]
-          portfolio_counts[tn] <- portfolio_counts[tn] + floor_alloc[k]
-
-          # Update path diversity tracker
-          path_key <- paste0(tn, ":", ut_hash)
-          path_counts[[path_key]] <- (path_counts[[path_key]] %||% 0L) +
-            as.integer(floor_alloc[k])
-        }
       }
     }
 
-    # Print portfolio distribution
-    active <- portfolio_counts[portfolio_counts > 0]
-    cat(sprintf("  Portfolio spread: %d unique teams\n", length(active)))
-    for (tn in names(sort(active, decreasing = TRUE))) {
+    # Sort entries by best standalone EV (highest first)
+    slot_order <- order(-sapply(entry_slots, `[[`, "best_ev"))
+    entry_slots <- entry_slots[slot_order]
+
+    # Track per-sim our surviving entries and per-group×team allocation counts
+    our_survivors <- rep(0L, n_sims_alloc)
+    alloc_tracker <- list()  # key: "group_id:team_id" -> list(count, team_name, etc.)
+    team_counts_ct <- list()  # team_name -> count in this contest (for diversity penalty)
+
+    cache_hits <- 0L
+    cache_misses <- 0L
+
+    for (ei in seq_along(entry_slots)) {
+      slot <- entry_slots[[ei]]
+      g <- slot$group
+      g_scores <- slot$scores
+
+      best_marginal_ev <- -Inf
+      best_team_id <- NULL
+      best_team_name <- NULL
+      best_survived <- NULL
+      best_p_surv <- 0
+      best_p_win <- 0
+      best_slot1_extra <- NA_character_
+
+      for (k in seq_len(nrow(g_scores))) {
+        r <- g_scores[k]
+        cache_key <- paste0(g$group_id, ":", r$team_id)
+        dr <- death_rd_cache[[cache_key]]
+
+        if (is.null(dr)) {
+          cache_misses <- cache_misses + 1L
+          next
+        }
+        cache_hits <- cache_hits + 1L
+
+        survived <- (dr == 0L)
+        # Marginal EV: in sims where this entry survives, it splits prize with
+        # field survivors + our previously assigned survivors
+        marginal_ev <- mean(survived * prize_pool / (1 + n_field_final + our_survivors))
+
+        # Diversity penalty: discount repeated picks of the same team in this contest
+        # diversity_exp=0 → no penalty (pure EV), 0.5 → moderate, 1.0 → aggressive
+        if (diversity_exp > 0) {
+          same_team_n <- team_counts_ct[[r$team_name]] %||% 0L
+          marginal_ev <- marginal_ev / (1 + same_team_n) ^ diversity_exp
+        }
+
+        if (marginal_ev > best_marginal_ev) {
+          best_marginal_ev <- marginal_ev
+          best_team_id <- r$team_id
+          best_team_name <- r$team_name
+          best_survived <- survived
+          best_p_surv <- r$p_survive_today
+          best_p_win <- r$p_win_contest
+          best_slot1_extra <- if ("slot1_extra_name" %in% names(r)) r$slot1_extra_name else NA_character_
+        }
+      }
+
+      if (is.null(best_team_id)) next
+
+      # Update our survivors tracker
+      our_survivors <- our_survivors + as.integer(best_survived)
+
+      # Update team count for diversity penalty
+      team_counts_ct[[best_team_name]] <- (team_counts_ct[[best_team_name]] %||% 0L) + 1L
+
+      # Accumulate allocation (group_id × team_id -> count)
+      alloc_key <- paste0(g$group_id, ":", best_team_id)
+      if (is.null(alloc_tracker[[alloc_key]])) {
+        alloc_tracker[[alloc_key]] <- list(
+          contest_id = g$contest_id, group_id = g$group_id,
+          team_name = best_team_name, team_id = best_team_id,
+          n_assigned = 1L, marginal_ev = best_marginal_ev,
+          p_survive_today = best_p_surv, p_win_contest = best_p_win,
+          slot1_extra_name = best_slot1_extra,
+          used_teams = g$used_teams[[1]]
+        )
+      } else {
+        alloc_tracker[[alloc_key]]$n_assigned <- alloc_tracker[[alloc_key]]$n_assigned + 1L
+      }
+    }
+
+    # Convert alloc_tracker to allocation_list entries
+    for (ak in names(alloc_tracker)) {
+      a <- alloc_tracker[[ak]]
+      allocation_list[[length(allocation_list) + 1]] <- data.table(
+        contest_id      = a$contest_id,
+        group_id        = a$group_id,
+        team_name       = a$team_name,
+        team_id         = a$team_id,
+        n_assigned      = a$n_assigned,
+        ev              = a$marginal_ev,
+        p_survive_today = a$p_survive_today,
+        p_win_contest   = a$p_win_contest,
+        slot1_extra_name = a$slot1_extra_name,
+        used_teams      = list(a$used_teams)
+      )
+    }
+
+    # Compute portfolio EV directly from sim data
+    portfolio_payout <- ifelse(our_survivors > 0,
+                               our_survivors * prize_pool / (n_field_final + our_survivors),
+                               0)
+    portfolio_ev_contest <- mean(portfolio_payout)
+
+    # Print summary
+    team_counts <- table(sapply(alloc_tracker, `[[`, "team_name"),
+                         sapply(alloc_tracker, `[[`, "n_assigned"))
+    team_totals <- tapply(
+      sapply(alloc_tracker, `[[`, "n_assigned"),
+      sapply(alloc_tracker, `[[`, "team_name"),
+      sum
+    )
+    team_totals <- sort(team_totals, decreasing = TRUE)
+
+    cat(sprintf("  Contest %s: %d entries, %d groups | Portfolio EV = $%.2f ($%.2f/entry)\n",
+                substr(cid, 1, 12), total_entries, nrow(ct_groups),
+                portfolio_ev_contest, portfolio_ev_contest / max(total_entries, 1)))
+    cat(sprintf("  Portfolio spread: %d unique teams\n", length(team_totals)))
+    for (tn in names(team_totals)) {
       cat(sprintf("    %-30s: %d entries (%.0f%%)\n",
-                  tn, active[tn], 100 * active[tn] / total_entries))
+                  tn, team_totals[tn], 100 * team_totals[tn] / total_entries))
+    }
+    if (cache_misses > 0) {
+      cat(sprintf("  WARNING: %d cache misses (recompile C++), %d hits\n", cache_misses, cache_hits))
     }
   }
 
@@ -2480,17 +2493,36 @@ optimize_today <- function(state, candidates, current_slot_id, sim, tw,
     allocation[, leverage := p_survive_today / pmax(ownership, 0.001)]
   }
 
-  # --- Portfolio-level EV (share-based, NFL-style) ---
+  # Portfolio EV already computed per-contest above; store as data.table for print_allocation
   if (nrow(allocation) > 0) {
-    cat("\n--- Computing portfolio-level EVs (share formula) ---\n")
-    portfolio_ev <- evaluate_portfolio_ev(
-      allocation, groups, current_slot_id, sim, tw, teams_dt,
-      ownership_by_slot, sim_sample_size = sim_sample_size,
-      death_rd_cache = death_rd_cache, scoring_sample_idx = sample_idx,
-      field_sim_data = field_sim_data,
-      entry_field_data = entry_field_data
-    )
-    attr(allocation, "portfolio_ev") <- portfolio_ev
+    pev_rows <- list()
+    for (cid in contest_ids) {
+      ct_groups_pev <- groups[contest_id == cid]
+      if (nrow(ct_groups_pev) == 0) next
+      ct_entry_pev <- entry_field_data[[cid]]
+      if (is.null(ct_entry_pev)) next
+      n_field_pev <- as.integer(round(ct_entry_pev$n_alive_matrix[sample_idx, ncol(ct_entry_pev$n_alive_matrix)]))
+      # Recompute our_survivors for this contest from allocation
+      ct_alloc <- allocation[contest_id == cid]
+      our_surv_pev <- rep(0L, n_sims_alloc)
+      for (ai in seq_len(nrow(ct_alloc))) {
+        a <- ct_alloc[ai]
+        cache_key <- paste0(a$group_id, ":", a$team_id)
+        dr <- death_rd_cache[[cache_key]]
+        if (!is.null(dr)) {
+          our_surv_pev <- our_surv_pev + a$n_assigned * as.integer(dr == 0L)
+        }
+      }
+      pev <- mean(ifelse(our_surv_pev > 0,
+                         our_surv_pev * ct_groups_pev$prize_pool[1] / (n_field_pev + our_surv_pev),
+                         0))
+      pev_rows[[length(pev_rows) + 1]] <- data.table(
+        contest_id = cid, portfolio_ev = pev,
+        prize_pool = ct_groups_pev$prize_pool[1],
+        n_entries = sum(ct_alloc$n_assigned)
+      )
+    }
+    attr(allocation, "portfolio_ev") <- rbindlist(pev_rows)
   }
 
   attr(allocation, "scores") <- scores
@@ -2520,8 +2552,17 @@ print_allocation <- function(allocation, teams_dt, scores = NULL, groups = NULL,
   # Summary by team
   has_extras <- "slot1_extra_name" %in% names(allocation) &&
     any(!is.na(allocation$slot1_extra_name))
+
+  # Join entry_fee from groups onto allocation for fee-weighted percentages
+  if (!"entry_fee" %in% names(allocation)) {
+    fee_lookup <- groups[, .(entry_fee = entry_fee[1]), by = .(contest_id, group_id)]
+    allocation <- merge(allocation, fee_lookup, by = c("contest_id", "group_id"), all.x = TRUE)
+    if (any(is.na(allocation$entry_fee))) allocation[is.na(entry_fee), entry_fee := 0]
+  }
+
   by_team <- allocation[, .(
     total_entries   = sum(n_assigned),
+    total_fees      = sum(n_assigned * entry_fee),
     avg_ev          = weighted.mean(ev, n_assigned),
     avg_win_today   = weighted.mean(p_survive_today, n_assigned),
     avg_win_contest = weighted.mean(p_win_contest, n_assigned),
@@ -2532,8 +2573,9 @@ print_allocation <- function(allocation, teams_dt, scores = NULL, groups = NULL,
   # Add seed
   by_team[, seed := teams_dt$seed[match(team_id, teams_dt$team_id)]]
   by_team[, region := teams_dt$region[match(team_id, teams_dt$team_id)]]
-  setorder(by_team, -total_entries)
+  setorder(by_team, -total_fees)
   total_entries <- sum(by_team$total_entries)
+  total_fees <- sum(by_team$total_fees)
 
   # Compute opponent ownership and availability from entry field data
   opp_own <- setNames(rep(NA_real_, nrow(by_team)), by_team$team_name)
@@ -2570,7 +2612,7 @@ print_allocation <- function(allocation, teams_dt, scores = NULL, groups = NULL,
 
   if (has_opp_data) {
     cat(sprintf("%-25s %4s %-8s %7s %5s %9s %11s %8s %8s %8s\n",
-                "Team", "Seed", "Region", "Entries", "Pct", "Win Today",
+                "Team", "Seed", "Region", "Entries", "$Pct", "Win Today",
                 "Win Contest", "Contests", "Opp Own%", "Avail%"))
     cat(paste(rep("-", 117), collapse = ""), "\n")
   } else {
@@ -2585,7 +2627,7 @@ print_allocation <- function(allocation, teams_dt, scores = NULL, groups = NULL,
     if (has_extras && !is.na(r$slot1_extra_name)) {
       name_str <- paste0(name_str, " + ", r$slot1_extra_name)
     }
-    pct <- 100 * r$total_entries / total_entries
+    pct <- 100 * r$total_fees / total_fees
     if (has_opp_data) {
       own_pct <- if (!is.na(opp_own[r$team_name])) sprintf("%6.1f%%", 100 * opp_own[r$team_name]) else "    N/A"
       avail_pct <- if (!is.na(opp_avail[r$team_name])) sprintf("%6.1f%%", 100 * opp_avail[r$team_name]) else "    N/A"
@@ -2705,7 +2747,8 @@ run_optimizer <- function(sim_file = NULL, state_file = NULL, current_slot_id,
                            scrape_inputs = NULL, ownership_override = NULL,
                            contest_filter = NULL, locked_teams = NULL,
                            entry_field_data = NULL,
-                           method = "beam") {
+                           method = "beam",
+                           diversity_exp = 0) {
   pipeline_start <- proc.time()[["elapsed"]]
 
   field_sim_data <- NULL
@@ -2967,7 +3010,8 @@ run_optimizer <- function(sim_file = NULL, state_file = NULL, current_slot_id,
     field_sim_data = field_sim_data,
     locked_team_ids = locked_team_ids,
     entry_field_data = entry_field_data,
-    method = method
+    method = method,
+    diversity_exp = diversity_exp
   )
 
   # Print recommendation

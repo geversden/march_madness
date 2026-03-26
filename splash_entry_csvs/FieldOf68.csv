@@ -1,105 +1,81 @@
-Slate ID,Entry Name,Entry ID,Previous Picks,Day 1 (Round of 64),Day 2 (Round of 64),Day 3 (Round of 32),Pick 1,Pick Objective,Instructions,Team Name,Team ID,Game Info
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 1,019d0328-e06f-4004-bd56-9800f450e208,NA,Illinois,Florida,Arkansas,5ea7c1aa-0bfc-47e8-8435-28821e1bf209,Pick Winners,1. Locate the team(s) you want to select in the list to the right,Purdue,b94a5674-927b-4b6d-91bb-776da741e0aa,MIA@PUR 03/22/2026 12:10pm ET
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 2,019d0328-e06f-400b-8784-c7b9921f2379,NA,Illinois,Florida,Arkansas,b46ec7e5-fa6c-451f-945e-5e535024bcc4,Pick Winners,2. Copy the ID of the team(s),Miami (FL),4c8b8317-c6db-46d3-9e57-43cad4d49607,MIA@PUR 03/22/2026 12:10pm ET
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 3,019d0328-e06f-401d-834d-f29b6beacd1e,NA,Illinois,Arizona,Arkansas,2ea39297-9b1d-4908-b4dc-392274c18b3a,Pick Winners,3. Paste the ID into the desired entry under the Pick column,Iowa State,b46ec7e5-fa6c-451f-945e-5e535024bcc4,UK@ISU 03/22/2026 2:45pm ET
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 4,019d0328-e06f-401d-be3b-d3329a0c5305,NA,Illinois,Arizona,Arkansas,7c049b43-d637-406d-b50f-5e4a2beb629a,Pick Winners,4. The Team ID is the only text that can be input into the cell,Kentucky,6fdf8f76-e295-4406-b5a5-0e77fb53a5ee,UK@ISU 03/22/2026 2:45pm ET
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 5,019d0328-e06f-4072-b130-5db841c713ca,NA,Illinois,Tennessee,Arkansas,5ea7c1aa-0bfc-47e8-8435-28821e1bf209,Pick Winners,"5. Do not make edits anywhere in the sheet, or else the file will be invalid",Kansas,77e8940e-cb31-42c7-bca0-271249909a4b,SJU@KU 03/22/2026 5:15pm ET
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 6,019d0328-e06f-4096-a278-75b365725dec,NA,Illinois,Alabama,Arkansas,5ea7c1aa-0bfc-47e8-8435-28821e1bf209,Pick Winners,NA,St. John's,7c049b43-d637-406d-b50f-5e4a2beb629a,SJU@KU 03/22/2026 5:15pm ET
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 7,019d0328-e06f-40ac-8ded-6e846f416889,NA,Illinois,Virginia,Arkansas,5ea7c1aa-0bfc-47e8-8435-28821e1bf209,Pick Winners,NA,Virginia,840e7069-b4c0-4780-8cd1-95b66ad88ceb,TENN@UVA 03/22/2026 6:10pm ET
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 8,019d0328-e06f-40ac-8fb5-19503c55027a,NA,Illinois,Virginia,Arkansas,2ea39297-9b1d-4908-b4dc-392274c18b3a,Pick Winners,NA,Tennessee,1e4ab2a3-cec8-4ebd-96a2-7d62e9e1a24e,TENN@UVA 03/22/2026 6:10pm ET
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 9,019d0328-e06f-40be-b8e6-ac80f7d9bea6,NA,Illinois,UConn,Arkansas,2ea39297-9b1d-4908-b4dc-392274c18b3a,Pick Winners,NA,Florida,2ea39297-9b1d-4908-b4dc-392274c18b3a,IOWA@FLA 03/22/2026 7:10pm ET
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 10,019d0328-e06f-40e2-8885-f21286d344da,NA,Illinois,UConn,Arkansas,b46ec7e5-fa6c-451f-945e-5e535024bcc4,Pick Winners,NA,Iowa,7533674c-1b62-4252-9d3e-3de38e7fd3c6,IOWA@FLA 03/22/2026 7:10pm ET
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 11,019d0328-e06f-40fe-bf26-e38b13ac0521,NA,Illinois,Purdue,Arkansas,2ea39297-9b1d-4908-b4dc-392274c18b3a,Pick Winners,NA,Arizona,5ea7c1aa-0bfc-47e8-8435-28821e1bf209,USU@ARIZ 03/22/2026 7:50pm ET
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 12,019d0328-e06f-4102-9ae3-d72d61cfb749,NA,Illinois,Kansas,Arkansas,5ea7c1aa-0bfc-47e8-8435-28821e1bf209,Pick Winners,NA,Utah State,bd55c7eb-7658-4eac-b14a-59dfd6d29e05,USU@ARIZ 03/22/2026 7:50pm ET
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 13,019d0328-e06f-411a-af9d-e65e4343891a,NA,Illinois,St. John's,Arkansas,5ea7c1aa-0bfc-47e8-8435-28821e1bf209,Pick Winners,NA,UConn,57ef2016-6591-4b7a-b588-59a749c25529,UCLA@CONN 03/22/2026 8:45pm ET
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 14,019d0328-e06f-411f-8dae-9bfa6a02d1f6,NA,Illinois,UCLA,Arkansas,2ea39297-9b1d-4908-b4dc-392274c18b3a,Pick Winners,NA,UCLA,7095cbb4-4c8d-4438-acf1-b0dcea0f20d1,UCLA@CONN 03/22/2026 8:45pm ET
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 15,019d0328-e06f-4124-badc-00d219fddadf,NA,Illinois,Iowa State,Arkansas,5ea7c1aa-0bfc-47e8-8435-28821e1bf209,Pick Winners,NA,Alabama,12207ee4-a390-477d-a4a7-7aa3f49430aa,TTU@ALA 03/22/2026 9:45pm ET
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 16,019d0328-e06f-4145-9346-3153fd362f67,NA,Gonzaga,Florida,Arkansas,5ea7c1aa-0bfc-47e8-8435-28821e1bf209,Pick Winners,NA,Texas Tech,44d666f4-2c56-401f-871c-33df244ba155,TTU@ALA 03/22/2026 9:45pm ET
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 17,019d0328-e06f-414a-b57c-164c02d4b3e6,NA,Gonzaga,Florida,Arkansas,b46ec7e5-fa6c-451f-945e-5e535024bcc4,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 18,019d0328-e06f-41d9-b0e6-de52496345df,NA,Gonzaga,UConn,Arkansas,b46ec7e5-fa6c-451f-945e-5e535024bcc4,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 19,019d0328-e06f-41fd-80cc-38a4ee237909,NA,Gonzaga,Arizona,Illinois,2ea39297-9b1d-4908-b4dc-392274c18b3a,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 20,019d0328-e06f-421d-aa03-eb27539be19e,NA,Gonzaga,Arizona,Houston,2ea39297-9b1d-4908-b4dc-392274c18b3a,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 21,019d0328-e06f-422e-82c1-03dfa423a4cd,NA,Gonzaga,Alabama,Arkansas,b46ec7e5-fa6c-451f-945e-5e535024bcc4,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 22,019d0328-e06f-4245-b459-38eabd793b66,NA,Gonzaga,UConn,Arkansas,7c049b43-d637-406d-b50f-5e4a2beb629a,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 23,019d0328-e06f-4261-8954-7dce7fb1cd0e,NA,Gonzaga,Virginia,Illinois,5ea7c1aa-0bfc-47e8-8435-28821e1bf209,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 24,019d0328-e06f-4282-b9da-46c7ffd3d317,NA,Gonzaga,Virginia,Houston,5ea7c1aa-0bfc-47e8-8435-28821e1bf209,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 25,019d0328-e06f-42ab-813c-60652885311e,NA,Gonzaga,Purdue,Arkansas,2ea39297-9b1d-4908-b4dc-392274c18b3a,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 26,019d0328-e06f-42c4-8db7-eb2b8c179f77,NA,Gonzaga,Utah State,Arkansas,5ea7c1aa-0bfc-47e8-8435-28821e1bf209,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 27,019d0328-e06f-42d0-b8df-aadd351c5522,NA,Gonzaga,Virginia,Michigan,5ea7c1aa-0bfc-47e8-8435-28821e1bf209,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 28,019d0328-e06f-42ff-bebd-a06e6e6f7f39,NA,Gonzaga,Virginia,Michigan State,5ea7c1aa-0bfc-47e8-8435-28821e1bf209,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 29,019d0328-e06f-4311-821d-c4864b990edd,NA,Gonzaga,Purdue,Arkansas,7c049b43-d637-406d-b50f-5e4a2beb629a,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 30,019d0328-e06f-434f-8b9a-84cf299d8b52,NA,Gonzaga,Kansas,Arkansas,b46ec7e5-fa6c-451f-945e-5e535024bcc4,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 31,019d0328-e06f-4388-af2f-cf649c620beb,NA,Gonzaga,Kansas,Arkansas,7c049b43-d637-406d-b50f-5e4a2beb629a,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 32,019d0328-e06f-438e-9d4f-a79b1bd45eef,NA,Houston,Florida,Illinois,5ea7c1aa-0bfc-47e8-8435-28821e1bf209,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 33,019d0328-e06f-439c-a805-8c34ef639795,NA,Houston,Florida,Michigan,5ea7c1aa-0bfc-47e8-8435-28821e1bf209,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 35,019d0328-e06f-43bc-b6a2-6a30fbe072d6,NA,Houston,Florida,Michigan State,5ea7c1aa-0bfc-47e8-8435-28821e1bf209,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 36,019d0328-e06f-43c5-9dbf-1a62aa136b25,NA,Houston,UConn,Illinois,5ea7c1aa-0bfc-47e8-8435-28821e1bf209,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 37,019d0328-e06f-43c8-8e57-35a5e613bab4,NA,Houston,UConn,Michigan,5ea7c1aa-0bfc-47e8-8435-28821e1bf209,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 38,019d0328-e06f-43d1-959f-74fe64cbe10d,NA,Houston,Tennessee,Arkansas,b46ec7e5-fa6c-451f-945e-5e535024bcc4,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 39,019d0328-e06f-43d4-914d-02625ddabc3c,NA,Houston,Iowa State,Illinois,5ea7c1aa-0bfc-47e8-8435-28821e1bf209,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 41,019d0328-e06f-43e8-b8df-4710f1a29b9d,NA,Houston,Iowa State,Michigan State,1e4ab2a3-cec8-4ebd-96a2-7d62e9e1a24e,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 43,019d0328-e06f-443a-b3bc-ed0e6681b58f,NA,Houston,UConn,Michigan State,5ea7c1aa-0bfc-47e8-8435-28821e1bf209,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 44,019d0328-e06f-445f-bae6-733cbc3c4e38,NA,Houston,Purdue,Illinois,2ea39297-9b1d-4908-b4dc-392274c18b3a,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 45,019d0328-e06f-4486-8998-181d78d25c01,NA,Houston,Arizona,Illinois,2ea39297-9b1d-4908-b4dc-392274c18b3a,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 46,019d0328-e06f-44a7-8640-11467eaf5275,NA,Houston,Arizona,Michigan,2ea39297-9b1d-4908-b4dc-392274c18b3a,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 48,019d0328-e06f-44bd-8024-4f880812170a,NA,Houston,Arizona,Michigan State,2ea39297-9b1d-4908-b4dc-392274c18b3a,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 50,019d0328-e06f-44d8-a458-dd2def6788c3,NA,Houston,Purdue,Michigan,2ea39297-9b1d-4908-b4dc-392274c18b3a,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 51,019d0328-e06f-44eb-aeea-8176f70522b7,NA,Houston,Purdue,Michigan State,2ea39297-9b1d-4908-b4dc-392274c18b3a,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 52,019d0328-e06f-44fd-b948-eb4bc2192104,NA,Houston,Kansas,Illinois,5ea7c1aa-0bfc-47e8-8435-28821e1bf209,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 53,019d0328-e06f-4501-bfb7-a7246eff3187,NA,Houston,Virginia,Illinois,5ea7c1aa-0bfc-47e8-8435-28821e1bf209,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 54,019d0328-e06f-453c-aa61-9d176f539645,NA,Houston,Virginia,Michigan,5ea7c1aa-0bfc-47e8-8435-28821e1bf209,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 55,019d0328-e06f-4583-b84b-b6118e88b34f,NA,Houston,Virginia,Michigan State,5ea7c1aa-0bfc-47e8-8435-28821e1bf209,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 57,019d0328-e06f-45d6-8620-431fc0d65d98,NA,Houston,Kansas,Michigan State,5ea7c1aa-0bfc-47e8-8435-28821e1bf209,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 58,019d0328-e06f-4618-8eb1-d4c724f8bb32,NA,Houston,St. John's,Arkansas,b46ec7e5-fa6c-451f-945e-5e535024bcc4,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 59,019d0328-e06f-463b-a483-009590f18983,NA,Houston,St. John's,Arkansas,1e4ab2a3-cec8-4ebd-96a2-7d62e9e1a24e,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 60,019d0328-e06f-4663-b509-23b4687cd753,NA,Houston,UCLA,Arkansas,2ea39297-9b1d-4908-b4dc-392274c18b3a,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 61,019d0328-e06f-4687-8373-db95e01fae06,NA,Houston,Iowa,Arkansas,5ea7c1aa-0bfc-47e8-8435-28821e1bf209,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 63,019d0328-e06f-46a5-b1ec-6ddf203df241,NA,Houston,Tennessee,Arkansas,7c049b43-d637-406d-b50f-5e4a2beb629a,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 64,019d0328-e06f-46d4-bcaa-82f08479feb7,NA,Michigan State,Alabama,Illinois,5ea7c1aa-0bfc-47e8-8435-28821e1bf209,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 65,019d0328-e06f-46e8-9726-91c93a678907,NA,Michigan State,Florida,Illinois,5ea7c1aa-0bfc-47e8-8435-28821e1bf209,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 66,019d0328-e06f-4774-95b4-9d81d23d516f,NA,Michigan State,UConn,Illinois,5ea7c1aa-0bfc-47e8-8435-28821e1bf209,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 67,019d0328-e06f-4780-8634-3bfd67b64003,NA,Michigan State,Purdue,Illinois,2ea39297-9b1d-4908-b4dc-392274c18b3a,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 68,019d0328-e06f-4794-8f46-20359e642918,NA,Michigan State,Kansas,Illinois,5ea7c1aa-0bfc-47e8-8435-28821e1bf209,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 69,019d0328-e06f-47eb-b144-d0f0ed6af5e2,NA,Michigan State,St. John's,Illinois,5ea7c1aa-0bfc-47e8-8435-28821e1bf209,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 70,019d0328-e06f-481e-a7d0-93445c4362a7,NA,Michigan State,UCLA,Illinois,2ea39297-9b1d-4908-b4dc-392274c18b3a,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 71,019d0328-e06f-4841-b92d-ae101fc52a1f,NA,Michigan State,Iowa State,Illinois,5ea7c1aa-0bfc-47e8-8435-28821e1bf209,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 72,019d0328-e06f-4862-a4d8-59ec4763a7c3,NA,Michigan State,Iowa State,Houston,7c049b43-d637-406d-b50f-5e4a2beb629a,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 73,019d0328-e06f-48ca-a9af-c201196f41b5,NA,Michigan State,Iowa State,Duke,5ea7c1aa-0bfc-47e8-8435-28821e1bf209,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 74,019d0328-e06f-48d1-b5cd-0a93de6cfc00,NA,Michigan State,Iowa,Illinois,5ea7c1aa-0bfc-47e8-8435-28821e1bf209,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 75,019d0328-e06f-48d5-9590-26e27a848e70,NA,Michigan State,Utah State,Illinois,5ea7c1aa-0bfc-47e8-8435-28821e1bf209,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 76,019d0328-e06f-4902-ac45-6f004ec48bc9,NA,Michigan State,Arizona,Illinois,2ea39297-9b1d-4908-b4dc-392274c18b3a,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 77,019d0328-e06f-494c-b924-49f4d96cf830,NA,Nebraska,Florida,Arkansas,5ea7c1aa-0bfc-47e8-8435-28821e1bf209,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 78,019d0328-e06f-49b1-bafe-ae0442ef7bda,NA,Nebraska,Virginia,Arkansas,b46ec7e5-fa6c-451f-945e-5e535024bcc4,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 79,019d0328-e06f-49b3-a01d-1ae42dbeac99,NA,Nebraska,Virginia,Arkansas,7c049b43-d637-406d-b50f-5e4a2beb629a,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 80,019d0328-e06f-49ec-a217-c8da33e4bee4,NA,Nebraska,UConn,Arkansas,5ea7c1aa-0bfc-47e8-8435-28821e1bf209,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 81,019d0328-e06f-49fd-baf3-929f206f4013,NA,Nebraska,Purdue,Arkansas,2ea39297-9b1d-4908-b4dc-392274c18b3a,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 82,019d0328-e06f-4a3d-a7e3-90a4bb40616d,NA,Nebraska,Arizona,Arkansas,7c049b43-d637-406d-b50f-5e4a2beb629a,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 83,019d0328-e06f-4a42-8f01-34df71fb3569,NA,Nebraska,Alabama,Arkansas,5ea7c1aa-0bfc-47e8-8435-28821e1bf209,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 84,019d0328-e06f-4a4a-b4d3-9bd040e1e79b,NA,Nebraska,Tennessee,Arkansas,5ea7c1aa-0bfc-47e8-8435-28821e1bf209,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 85,019d0328-e06f-4a5a-beea-27843acc2231,NA,Nebraska,Kansas,Arkansas,5ea7c1aa-0bfc-47e8-8435-28821e1bf209,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 86,019d0328-e06f-4a7b-ab60-8521b2417215,NA,Nebraska,Iowa State,Arkansas,5ea7c1aa-0bfc-47e8-8435-28821e1bf209,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 87,019d0328-e06f-4a96-9aca-dd9a3bd340f1,NA,Nebraska,St. John's,Arkansas,5ea7c1aa-0bfc-47e8-8435-28821e1bf209,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 88,019d0328-e06f-4abf-895c-83e2df4b7309,NA,Nebraska,UCLA,Arkansas,2ea39297-9b1d-4908-b4dc-392274c18b3a,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 89,019d0328-e06f-4ae5-99cf-84e2dcaa2401,NA,Nebraska,Arizona,Arkansas,b46ec7e5-fa6c-451f-945e-5e535024bcc4,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 90,019d0328-e06f-4af5-9bbb-bd3e3cc03129,NA,Gonzaga,Arizona,Michigan,2ea39297-9b1d-4908-b4dc-392274c18b3a,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 91,019d0328-e06f-4b3c-9838-8b9afea0ca45,NA,Gonzaga,St. John's,Arkansas,b46ec7e5-fa6c-451f-945e-5e535024bcc4,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 92,019d0328-e06f-4b48-9ae4-93cc18049e1a,NA,Gonzaga,St. John's,Arkansas,1e4ab2a3-cec8-4ebd-96a2-7d62e9e1a24e,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 93,019d0328-e06f-4b68-8ba0-ead49181dd1c,NA,Gonzaga,Virginia,Duke,5ea7c1aa-0bfc-47e8-8435-28821e1bf209,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 94,019d0328-e06f-4b9c-aa72-5a9e4574df9b,NA,Gonzaga,UCLA,Arkansas,2ea39297-9b1d-4908-b4dc-392274c18b3a,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 95,019d0328-e06f-4c01-94ea-b8c6399ccb5a,NA,Gonzaga,Iowa,Arkansas,5ea7c1aa-0bfc-47e8-8435-28821e1bf209,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 96,019d0328-e06f-4c0e-8b4b-6e218c06a7ba,NA,Gonzaga,Alabama,Arkansas,7c049b43-d637-406d-b50f-5e4a2beb629a,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 97,019d0328-e06f-4c1c-b6b6-39a54ea70666,NA,Gonzaga,Tennessee,Arkansas,5ea7c1aa-0bfc-47e8-8435-28821e1bf209,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 99,019d0328-e06f-4c4d-b302-3336a517aecc,NA,Gonzaga,Iowa State,Arkansas,5ea7c1aa-0bfc-47e8-8435-28821e1bf209,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 100,019d0328-e06f-4c6f-87d0-3f7f228b3685,NA,Vanderbilt,Florida,Arkansas,5ea7c1aa-0bfc-47e8-8435-28821e1bf209,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 101,019d0328-e06f-4cac-a0c0-e982d5e58128,NA,Vanderbilt,Arizona,Arkansas,2ea39297-9b1d-4908-b4dc-392274c18b3a,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 102,019d0328-e06f-4cb9-aa29-a3f8380bbae3,NA,Vanderbilt,UConn,Arkansas,5ea7c1aa-0bfc-47e8-8435-28821e1bf209,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 103,019d0328-e06f-4cbb-95a1-295736af9526,NA,Vanderbilt,Virginia,Arkansas,b46ec7e5-fa6c-451f-945e-5e535024bcc4,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 104,019d0328-e06f-4ccc-837d-0fcef26d6817,NA,Vanderbilt,Virginia,Arkansas,7c049b43-d637-406d-b50f-5e4a2beb629a,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 105,019d0328-e06f-4cd0-9081-477566436e03,NA,Vanderbilt,Purdue,Arkansas,2ea39297-9b1d-4908-b4dc-392274c18b3a,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 106,019d0328-e06f-4ce8-9029-da908a1a08ec,NA,Vanderbilt,Tennessee,Houston,5ea7c1aa-0bfc-47e8-8435-28821e1bf209,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 108,019d0328-e06f-4d0a-9bb9-de26f043e132,NA,Vanderbilt,Alabama,Arkansas,b46ec7e5-fa6c-451f-945e-5e535024bcc4,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 109,019d0328-e06f-4d13-bbc2-67786a12abf9,NA,Vanderbilt,Alabama,Arkansas,7c049b43-d637-406d-b50f-5e4a2beb629a,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 110,019d0328-e06f-4d55-a028-d6ef834b2ad5,NA,Vanderbilt,Tennessee,Michigan State,5ea7c1aa-0bfc-47e8-8435-28821e1bf209,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 111,019d0328-e06f-4d58-9f0f-417a1c3d7408,NA,Vanderbilt,Tennessee,Duke,5ea7c1aa-0bfc-47e8-8435-28821e1bf209,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 112,019d0328-e06f-4da3-a640-c03bfa2e77c4,NA,Vanderbilt,St. John's,Arkansas,5ea7c1aa-0bfc-47e8-8435-28821e1bf209,Pick Winners,NA,NA,NA,NA
-e9b488eb-225f-4c69-aa4a-dc87c81271f6,Entry 113,019d0328-e06f-4dc0-a09b-08e18e2cda3c,NA,Vanderbilt,Iowa State,Arkansas,5ea7c1aa-0bfc-47e8-8435-28821e1bf209,Pick Winners,NA,NA,NA,NA
+Slate ID,Entry Name,Entry ID,Previous Picks,Day 1 (Round of 64),Day 2 (Round of 64),Day 3 (Round of 32),Day 4 (Round of 32),Pick 1,Pick Objective,Instructions,Team Name,Team ID,Game Info
+7c5e0cba-a922-4a64-9565-7c960935f12f,Entry 1,019d0328-e06f-4004-bd56-9800f450e208,NA,Illinois,Florida,Arkansas,Arizona,72cd0c03-59cd-42e9-a938-d741e77e6bae,Pick Winners,1. Locate the team(s) you want to select in the list to the right,Purdue,b94a5674-927b-4b6d-91bb-776da741e0aa,TEX@PUR 03/26/2026 7:10pm ET
+7c5e0cba-a922-4a64-9565-7c960935f12f,Entry 2,019d0328-e06f-400b-8784-c7b9921f2379,NA,Illinois,Florida,Arkansas,Iowa State,b94a5674-927b-4b6d-91bb-776da741e0aa,Pick Winners,2. Copy the ID of the team(s),Texas,9d2884f6-0a5a-424f-9e32-79546f103184,TEX@PUR 03/26/2026 7:10pm ET
+7c5e0cba-a922-4a64-9565-7c960935f12f,Entry 4,019d0328-e06f-401d-be3b-d3329a0c5305,NA,Illinois,Arizona,Arkansas,St. John's,d17a3ce5-9a77-4d1a-bc1e-63a100bc6509,Pick Winners,3. Paste the ID into the desired entry under the Pick column,Nebraska,72cd0c03-59cd-42e9-a938-d741e77e6bae,IOWA@NEB 03/26/2026 7:30pm ET
+7c5e0cba-a922-4a64-9565-7c960935f12f,Entry 5,019d0328-e06f-4072-b130-5db841c713ca,NA,Illinois,Tennessee,Arkansas,Arizona,d17a3ce5-9a77-4d1a-bc1e-63a100bc6509,Pick Winners,4. The Team ID is the only text that can be input into the cell,Iowa,7533674c-1b62-4252-9d3e-3de38e7fd3c6,IOWA@NEB 03/26/2026 7:30pm ET
+7c5e0cba-a922-4a64-9565-7c960935f12f,Entry 6,019d0328-e06f-4096-a278-75b365725dec,NA,Illinois,Alabama,Arkansas,Arizona,d17a3ce5-9a77-4d1a-bc1e-63a100bc6509,Pick Winners,"5. Do not make edits anywhere in the sheet, or else the file will be invalid",Arizona,5ea7c1aa-0bfc-47e8-8435-28821e1bf209,ARK@ARIZ 03/26/2026 9:45pm ET
+7c5e0cba-a922-4a64-9565-7c960935f12f,Entry 7,019d0328-e06f-40ac-8ded-6e846f416889,NA,Illinois,Virginia,Arkansas,Arizona,7533674c-1b62-4252-9d3e-3de38e7fd3c6,Pick Winners,NA,Arkansas,415597f4-8ef0-450d-aa90-7392abd8169f,ARK@ARIZ 03/26/2026 9:45pm ET
+7c5e0cba-a922-4a64-9565-7c960935f12f,Entry 10,019d0328-e06f-40e2-8885-f21286d344da,NA,Illinois,UConn,Arkansas,Iowa State,5ea7c1aa-0bfc-47e8-8435-28821e1bf209,Pick Winners,NA,Houston,d17a3ce5-9a77-4d1a-bc1e-63a100bc6509,ILL@HOU 03/26/2026 10:05pm ET
+7c5e0cba-a922-4a64-9565-7c960935f12f,Entry 12,019d0328-e06f-4102-9ae3-d72d61cfb749,NA,Illinois,Kansas,Arkansas,Arizona,72cd0c03-59cd-42e9-a938-d741e77e6bae,Pick Winners,NA,Illinois,88938946-3484-432a-8bf9-045860e4f561,ILL@HOU 03/26/2026 10:05pm ET
+7c5e0cba-a922-4a64-9565-7c960935f12f,Entry 13,019d0328-e06f-411a-af9d-e65e4343891a,NA,Illinois,St. John's,Arkansas,Arizona,72cd0c03-59cd-42e9-a938-d741e77e6bae,Pick Winners,NA,NA,NA,NA
+7c5e0cba-a922-4a64-9565-7c960935f12f,Entry 15,019d0328-e06f-4124-badc-00d219fddadf,NA,Illinois,Iowa State,Arkansas,Arizona,72cd0c03-59cd-42e9-a938-d741e77e6bae,Pick Winners,NA,NA,NA,NA
+7c5e0cba-a922-4a64-9565-7c960935f12f,Entry 16,019d0328-e06f-4145-9346-3153fd362f67,NA,Gonzaga,Florida,Arkansas,Arizona,7533674c-1b62-4252-9d3e-3de38e7fd3c6,Pick Winners,NA,NA,NA,NA
+7c5e0cba-a922-4a64-9565-7c960935f12f,Entry 17,019d0328-e06f-414a-b57c-164c02d4b3e6,NA,Gonzaga,Florida,Arkansas,Iowa State,72cd0c03-59cd-42e9-a938-d741e77e6bae,Pick Winners,NA,NA,NA,NA
+7c5e0cba-a922-4a64-9565-7c960935f12f,Entry 18,019d0328-e06f-41d9-b0e6-de52496345df,NA,Gonzaga,UConn,Arkansas,Iowa State,7533674c-1b62-4252-9d3e-3de38e7fd3c6,Pick Winners,NA,NA,NA,NA
+7c5e0cba-a922-4a64-9565-7c960935f12f,Entry 21,019d0328-e06f-422e-82c1-03dfa423a4cd,NA,Gonzaga,Alabama,Arkansas,Iowa State,72cd0c03-59cd-42e9-a938-d741e77e6bae,Pick Winners,NA,NA,NA,NA
+7c5e0cba-a922-4a64-9565-7c960935f12f,Entry 22,019d0328-e06f-4245-b459-38eabd793b66,NA,Gonzaga,UConn,Arkansas,St. John's,5ea7c1aa-0bfc-47e8-8435-28821e1bf209,Pick Winners,NA,NA,NA,NA
+7c5e0cba-a922-4a64-9565-7c960935f12f,Entry 23,019d0328-e06f-4261-8954-7dce7fb1cd0e,NA,Gonzaga,Virginia,Illinois,Arizona,415597f4-8ef0-450d-aa90-7392abd8169f,Pick Winners,NA,NA,NA,NA
+7c5e0cba-a922-4a64-9565-7c960935f12f,Entry 24,019d0328-e06f-4282-b9da-46c7ffd3d317,NA,Gonzaga,Virginia,Houston,Arizona,88938946-3484-432a-8bf9-045860e4f561,Pick Winners,NA,NA,NA,NA
+7c5e0cba-a922-4a64-9565-7c960935f12f,Entry 26,019d0328-e06f-42c4-8db7-eb2b8c179f77,NA,Gonzaga,Utah State,Arkansas,Arizona,72cd0c03-59cd-42e9-a938-d741e77e6bae,Pick Winners,NA,NA,NA,NA
+7c5e0cba-a922-4a64-9565-7c960935f12f,Entry 27,019d0328-e06f-42d0-b8df-aadd351c5522,NA,Gonzaga,Virginia,Michigan,Arizona,72cd0c03-59cd-42e9-a938-d741e77e6bae,Pick Winners,NA,NA,NA,NA
+7c5e0cba-a922-4a64-9565-7c960935f12f,Entry 28,019d0328-e06f-42ff-bebd-a06e6e6f7f39,NA,Gonzaga,Virginia,Michigan State,Arizona,72cd0c03-59cd-42e9-a938-d741e77e6bae,Pick Winners,NA,NA,NA,NA
+7c5e0cba-a922-4a64-9565-7c960935f12f,Entry 29,019d0328-e06f-4311-821d-c4864b990edd,NA,Gonzaga,Purdue,Arkansas,St. John's,9d2884f6-0a5a-424f-9e32-79546f103184,Pick Winners,NA,NA,NA,NA
+7c5e0cba-a922-4a64-9565-7c960935f12f,Entry 30,019d0328-e06f-434f-8b9a-84cf299d8b52,NA,Gonzaga,Kansas,Arkansas,Iowa State,b94a5674-927b-4b6d-91bb-776da741e0aa,Pick Winners,NA,NA,NA,NA
+7c5e0cba-a922-4a64-9565-7c960935f12f,Entry 31,019d0328-e06f-4388-af2f-cf649c620beb,NA,Gonzaga,Kansas,Arkansas,St. John's,72cd0c03-59cd-42e9-a938-d741e77e6bae,Pick Winners,NA,NA,NA,NA
+7c5e0cba-a922-4a64-9565-7c960935f12f,Entry 32,019d0328-e06f-438e-9d4f-a79b1bd45eef,NA,Houston,Florida,Illinois,Arizona,415597f4-8ef0-450d-aa90-7392abd8169f,Pick Winners,NA,NA,NA,NA
+7c5e0cba-a922-4a64-9565-7c960935f12f,Entry 33,019d0328-e06f-439c-a805-8c34ef639795,NA,Houston,Florida,Michigan,Arizona,88938946-3484-432a-8bf9-045860e4f561,Pick Winners,NA,NA,NA,NA
+7c5e0cba-a922-4a64-9565-7c960935f12f,Entry 35,019d0328-e06f-43bc-b6a2-6a30fbe072d6,NA,Houston,Florida,Michigan State,Arizona,88938946-3484-432a-8bf9-045860e4f561,Pick Winners,NA,NA,NA,NA
+7c5e0cba-a922-4a64-9565-7c960935f12f,Entry 36,019d0328-e06f-43c5-9dbf-1a62aa136b25,NA,Houston,UConn,Illinois,Arizona,415597f4-8ef0-450d-aa90-7392abd8169f,Pick Winners,NA,NA,NA,NA
+7c5e0cba-a922-4a64-9565-7c960935f12f,Entry 37,019d0328-e06f-43c8-8e57-35a5e613bab4,NA,Houston,UConn,Michigan,Arizona,88938946-3484-432a-8bf9-045860e4f561,Pick Winners,NA,NA,NA,NA
+7c5e0cba-a922-4a64-9565-7c960935f12f,Entry 38,019d0328-e06f-43d1-959f-74fe64cbe10d,NA,Houston,Tennessee,Arkansas,Iowa State,b94a5674-927b-4b6d-91bb-776da741e0aa,Pick Winners,NA,NA,NA,NA
+7c5e0cba-a922-4a64-9565-7c960935f12f,Entry 39,019d0328-e06f-43d4-914d-02625ddabc3c,NA,Houston,Iowa State,Illinois,Arizona,415597f4-8ef0-450d-aa90-7392abd8169f,Pick Winners,NA,NA,NA,NA
+7c5e0cba-a922-4a64-9565-7c960935f12f,Entry 41,019d0328-e06f-43e8-b8df-4710f1a29b9d,NA,Houston,Iowa State,Michigan State,Tennessee,b94a5674-927b-4b6d-91bb-776da741e0aa,Pick Winners,NA,NA,NA,NA
+7c5e0cba-a922-4a64-9565-7c960935f12f,Entry 43,019d0328-e06f-443a-b3bc-ed0e6681b58f,NA,Houston,UConn,Michigan State,Arizona,88938946-3484-432a-8bf9-045860e4f561,Pick Winners,NA,NA,NA,NA
+7c5e0cba-a922-4a64-9565-7c960935f12f,Entry 52,019d0328-e06f-44fd-b948-eb4bc2192104,NA,Houston,Kansas,Illinois,Arizona,415597f4-8ef0-450d-aa90-7392abd8169f,Pick Winners,NA,NA,NA,NA
+7c5e0cba-a922-4a64-9565-7c960935f12f,Entry 53,019d0328-e06f-4501-bfb7-a7246eff3187,NA,Houston,Virginia,Illinois,Arizona,415597f4-8ef0-450d-aa90-7392abd8169f,Pick Winners,NA,NA,NA,NA
+7c5e0cba-a922-4a64-9565-7c960935f12f,Entry 54,019d0328-e06f-453c-aa61-9d176f539645,NA,Houston,Virginia,Michigan,Arizona,88938946-3484-432a-8bf9-045860e4f561,Pick Winners,NA,NA,NA,NA
+7c5e0cba-a922-4a64-9565-7c960935f12f,Entry 55,019d0328-e06f-4583-b84b-b6118e88b34f,NA,Houston,Virginia,Michigan State,Arizona,88938946-3484-432a-8bf9-045860e4f561,Pick Winners,NA,NA,NA,NA
+7c5e0cba-a922-4a64-9565-7c960935f12f,Entry 57,019d0328-e06f-45d6-8620-431fc0d65d98,NA,Houston,Kansas,Michigan State,Arizona,415597f4-8ef0-450d-aa90-7392abd8169f,Pick Winners,NA,NA,NA,NA
+7c5e0cba-a922-4a64-9565-7c960935f12f,Entry 58,019d0328-e06f-4618-8eb1-d4c724f8bb32,NA,Houston,St. John's,Arkansas,Iowa State,b94a5674-927b-4b6d-91bb-776da741e0aa,Pick Winners,NA,NA,NA,NA
+7c5e0cba-a922-4a64-9565-7c960935f12f,Entry 59,019d0328-e06f-463b-a483-009590f18983,NA,Houston,St. John's,Arkansas,Tennessee,88938946-3484-432a-8bf9-045860e4f561,Pick Winners,NA,NA,NA,NA
+7c5e0cba-a922-4a64-9565-7c960935f12f,Entry 61,019d0328-e06f-4687-8373-db95e01fae06,NA,Houston,Iowa,Arkansas,Arizona,72cd0c03-59cd-42e9-a938-d741e77e6bae,Pick Winners,NA,NA,NA,NA
+7c5e0cba-a922-4a64-9565-7c960935f12f,Entry 63,019d0328-e06f-46a5-b1ec-6ddf203df241,NA,Houston,Tennessee,Arkansas,St. John's,b94a5674-927b-4b6d-91bb-776da741e0aa,Pick Winners,NA,NA,NA,NA
+7c5e0cba-a922-4a64-9565-7c960935f12f,Entry 64,019d0328-e06f-46d4-bcaa-82f08479feb7,NA,Michigan State,Alabama,Illinois,Arizona,415597f4-8ef0-450d-aa90-7392abd8169f,Pick Winners,NA,NA,NA,NA
+7c5e0cba-a922-4a64-9565-7c960935f12f,Entry 65,019d0328-e06f-46e8-9726-91c93a678907,NA,Michigan State,Florida,Illinois,Arizona,7533674c-1b62-4252-9d3e-3de38e7fd3c6,Pick Winners,NA,NA,NA,NA
+7c5e0cba-a922-4a64-9565-7c960935f12f,Entry 66,019d0328-e06f-4774-95b4-9d81d23d516f,NA,Michigan State,UConn,Illinois,Arizona,72cd0c03-59cd-42e9-a938-d741e77e6bae,Pick Winners,NA,NA,NA,NA
+7c5e0cba-a922-4a64-9565-7c960935f12f,Entry 68,019d0328-e06f-4794-8f46-20359e642918,NA,Michigan State,Kansas,Illinois,Arizona,415597f4-8ef0-450d-aa90-7392abd8169f,Pick Winners,NA,NA,NA,NA
+7c5e0cba-a922-4a64-9565-7c960935f12f,Entry 69,019d0328-e06f-47eb-b144-d0f0ed6af5e2,NA,Michigan State,St. John's,Illinois,Arizona,415597f4-8ef0-450d-aa90-7392abd8169f,Pick Winners,NA,NA,NA,NA
+7c5e0cba-a922-4a64-9565-7c960935f12f,Entry 71,019d0328-e06f-4841-b92d-ae101fc52a1f,NA,Michigan State,Iowa State,Illinois,Arizona,415597f4-8ef0-450d-aa90-7392abd8169f,Pick Winners,NA,NA,NA,NA
+7c5e0cba-a922-4a64-9565-7c960935f12f,Entry 72,019d0328-e06f-4862-a4d8-59ec4763a7c3,NA,Michigan State,Iowa State,Houston,St. John's,b94a5674-927b-4b6d-91bb-776da741e0aa,Pick Winners,NA,NA,NA,NA
+7c5e0cba-a922-4a64-9565-7c960935f12f,Entry 73,019d0328-e06f-48ca-a9af-c201196f41b5,NA,Michigan State,Iowa State,Duke,Arizona,7533674c-1b62-4252-9d3e-3de38e7fd3c6,Pick Winners,NA,NA,NA,NA
+7c5e0cba-a922-4a64-9565-7c960935f12f,Entry 74,019d0328-e06f-48d1-b5cd-0a93de6cfc00,NA,Michigan State,Iowa,Illinois,Arizona,72cd0c03-59cd-42e9-a938-d741e77e6bae,Pick Winners,NA,NA,NA,NA
+7c5e0cba-a922-4a64-9565-7c960935f12f,Entry 75,019d0328-e06f-48d5-9590-26e27a848e70,NA,Michigan State,Utah State,Illinois,Arizona,7533674c-1b62-4252-9d3e-3de38e7fd3c6,Pick Winners,NA,NA,NA,NA
+7c5e0cba-a922-4a64-9565-7c960935f12f,Entry 77,019d0328-e06f-494c-b924-49f4d96cf830,NA,Nebraska,Florida,Arkansas,Arizona,7533674c-1b62-4252-9d3e-3de38e7fd3c6,Pick Winners,NA,NA,NA,NA
+7c5e0cba-a922-4a64-9565-7c960935f12f,Entry 78,019d0328-e06f-49b1-bafe-ae0442ef7bda,NA,Nebraska,Virginia,Arkansas,Iowa State,7533674c-1b62-4252-9d3e-3de38e7fd3c6,Pick Winners,NA,NA,NA,NA
+7c5e0cba-a922-4a64-9565-7c960935f12f,Entry 79,019d0328-e06f-49b3-a01d-1ae42dbeac99,NA,Nebraska,Virginia,Arkansas,St. John's,7533674c-1b62-4252-9d3e-3de38e7fd3c6,Pick Winners,NA,NA,NA,NA
+7c5e0cba-a922-4a64-9565-7c960935f12f,Entry 80,019d0328-e06f-49ec-a217-c8da33e4bee4,NA,Nebraska,UConn,Arkansas,Arizona,7533674c-1b62-4252-9d3e-3de38e7fd3c6,Pick Winners,NA,NA,NA,NA
+7c5e0cba-a922-4a64-9565-7c960935f12f,Entry 82,019d0328-e06f-4a3d-a7e3-90a4bb40616d,NA,Nebraska,Arizona,Arkansas,St. John's,7533674c-1b62-4252-9d3e-3de38e7fd3c6,Pick Winners,NA,NA,NA,NA
+7c5e0cba-a922-4a64-9565-7c960935f12f,Entry 83,019d0328-e06f-4a42-8f01-34df71fb3569,NA,Nebraska,Alabama,Arkansas,Arizona,7533674c-1b62-4252-9d3e-3de38e7fd3c6,Pick Winners,NA,NA,NA,NA
+7c5e0cba-a922-4a64-9565-7c960935f12f,Entry 84,019d0328-e06f-4a4a-b4d3-9bd040e1e79b,NA,Nebraska,Tennessee,Arkansas,Arizona,7533674c-1b62-4252-9d3e-3de38e7fd3c6,Pick Winners,NA,NA,NA,NA
+7c5e0cba-a922-4a64-9565-7c960935f12f,Entry 85,019d0328-e06f-4a5a-beea-27843acc2231,NA,Nebraska,Kansas,Arkansas,Arizona,7533674c-1b62-4252-9d3e-3de38e7fd3c6,Pick Winners,NA,NA,NA,NA
+7c5e0cba-a922-4a64-9565-7c960935f12f,Entry 86,019d0328-e06f-4a7b-ab60-8521b2417215,NA,Nebraska,Iowa State,Arkansas,Arizona,7533674c-1b62-4252-9d3e-3de38e7fd3c6,Pick Winners,NA,NA,NA,NA
+7c5e0cba-a922-4a64-9565-7c960935f12f,Entry 87,019d0328-e06f-4a96-9aca-dd9a3bd340f1,NA,Nebraska,St. John's,Arkansas,Arizona,7533674c-1b62-4252-9d3e-3de38e7fd3c6,Pick Winners,NA,NA,NA,NA
+7c5e0cba-a922-4a64-9565-7c960935f12f,Entry 89,019d0328-e06f-4ae5-99cf-84e2dcaa2401,NA,Nebraska,Arizona,Arkansas,Iowa State,7533674c-1b62-4252-9d3e-3de38e7fd3c6,Pick Winners,NA,NA,NA,NA
+7c5e0cba-a922-4a64-9565-7c960935f12f,Entry 91,019d0328-e06f-4b3c-9838-8b9afea0ca45,NA,Gonzaga,St. John's,Arkansas,Iowa State,72cd0c03-59cd-42e9-a938-d741e77e6bae,Pick Winners,NA,NA,NA,NA
+7c5e0cba-a922-4a64-9565-7c960935f12f,Entry 92,019d0328-e06f-4b48-9ae4-93cc18049e1a,NA,Gonzaga,St. John's,Arkansas,Tennessee,72cd0c03-59cd-42e9-a938-d741e77e6bae,Pick Winners,NA,NA,NA,NA
+7c5e0cba-a922-4a64-9565-7c960935f12f,Entry 93,019d0328-e06f-4b68-8ba0-ead49181dd1c,NA,Gonzaga,Virginia,Duke,Arizona,72cd0c03-59cd-42e9-a938-d741e77e6bae,Pick Winners,NA,NA,NA,NA
+7c5e0cba-a922-4a64-9565-7c960935f12f,Entry 95,019d0328-e06f-4c01-94ea-b8c6399ccb5a,NA,Gonzaga,Iowa,Arkansas,Arizona,72cd0c03-59cd-42e9-a938-d741e77e6bae,Pick Winners,NA,NA,NA,NA
+7c5e0cba-a922-4a64-9565-7c960935f12f,Entry 96,019d0328-e06f-4c0e-8b4b-6e218c06a7ba,NA,Gonzaga,Alabama,Arkansas,St. John's,b94a5674-927b-4b6d-91bb-776da741e0aa,Pick Winners,NA,NA,NA,NA
+7c5e0cba-a922-4a64-9565-7c960935f12f,Entry 97,019d0328-e06f-4c1c-b6b6-39a54ea70666,NA,Gonzaga,Tennessee,Arkansas,Arizona,72cd0c03-59cd-42e9-a938-d741e77e6bae,Pick Winners,NA,NA,NA,NA
+7c5e0cba-a922-4a64-9565-7c960935f12f,Entry 99,019d0328-e06f-4c4d-b302-3336a517aecc,NA,Gonzaga,Iowa State,Arkansas,Arizona,7533674c-1b62-4252-9d3e-3de38e7fd3c6,Pick Winners,NA,NA,NA,NA
+7c5e0cba-a922-4a64-9565-7c960935f12f,Entry 100,019d0328-e06f-4c6f-87d0-3f7f228b3685,NA,Vanderbilt,Florida,Arkansas,Arizona,7533674c-1b62-4252-9d3e-3de38e7fd3c6,Pick Winners,NA,NA,NA,NA
+7c5e0cba-a922-4a64-9565-7c960935f12f,Entry 102,019d0328-e06f-4cb9-aa29-a3f8380bbae3,NA,Vanderbilt,UConn,Arkansas,Arizona,72cd0c03-59cd-42e9-a938-d741e77e6bae,Pick Winners,NA,NA,NA,NA
+7c5e0cba-a922-4a64-9565-7c960935f12f,Entry 103,019d0328-e06f-4cbb-95a1-295736af9526,NA,Vanderbilt,Virginia,Arkansas,Iowa State,7533674c-1b62-4252-9d3e-3de38e7fd3c6,Pick Winners,NA,NA,NA,NA
+7c5e0cba-a922-4a64-9565-7c960935f12f,Entry 104,019d0328-e06f-4ccc-837d-0fcef26d6817,NA,Vanderbilt,Virginia,Arkansas,St. John's,7533674c-1b62-4252-9d3e-3de38e7fd3c6,Pick Winners,NA,NA,NA,NA
+7c5e0cba-a922-4a64-9565-7c960935f12f,Entry 106,019d0328-e06f-4ce8-9029-da908a1a08ec,NA,Vanderbilt,Tennessee,Houston,Arizona,88938946-3484-432a-8bf9-045860e4f561,Pick Winners,NA,NA,NA,NA
+7c5e0cba-a922-4a64-9565-7c960935f12f,Entry 108,019d0328-e06f-4d0a-9bb9-de26f043e132,NA,Vanderbilt,Alabama,Arkansas,Iowa State,b94a5674-927b-4b6d-91bb-776da741e0aa,Pick Winners,NA,NA,NA,NA
+7c5e0cba-a922-4a64-9565-7c960935f12f,Entry 109,019d0328-e06f-4d13-bbc2-67786a12abf9,NA,Vanderbilt,Alabama,Arkansas,St. John's,72cd0c03-59cd-42e9-a938-d741e77e6bae,Pick Winners,NA,NA,NA,NA
+7c5e0cba-a922-4a64-9565-7c960935f12f,Entry 110,019d0328-e06f-4d55-a028-d6ef834b2ad5,NA,Vanderbilt,Tennessee,Michigan State,Arizona,72cd0c03-59cd-42e9-a938-d741e77e6bae,Pick Winners,NA,NA,NA,NA
+7c5e0cba-a922-4a64-9565-7c960935f12f,Entry 111,019d0328-e06f-4d58-9f0f-417a1c3d7408,NA,Vanderbilt,Tennessee,Duke,Arizona,72cd0c03-59cd-42e9-a938-d741e77e6bae,Pick Winners,NA,NA,NA,NA
+7c5e0cba-a922-4a64-9565-7c960935f12f,Entry 112,019d0328-e06f-4da3-a640-c03bfa2e77c4,NA,Vanderbilt,St. John's,Arkansas,Arizona,72cd0c03-59cd-42e9-a938-d741e77e6bae,Pick Winners,NA,NA,NA,NA
+7c5e0cba-a922-4a64-9565-7c960935f12f,Entry 113,019d0328-e06f-4dc0-a09b-08e18e2cda3c,NA,Vanderbilt,Iowa State,Arkansas,Arizona,72cd0c03-59cd-42e9-a938-d741e77e6bae,Pick Winners,NA,NA,NA,NA
