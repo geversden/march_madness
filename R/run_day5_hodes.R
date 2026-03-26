@@ -31,6 +31,10 @@ source(file.path(script_dir, "hodes_config.R"))
 source(file.path(script_dir, "hodes_optimizer.R"))
 source(file.path(script_dir, "hodes_entry_model.R"))
 source(file.path(script_dir, "calibrate_win_prob.R"))
+source(file.path(script_dir, "splash_config.R"))   # for get_slot (needed by build_locked_results)
+source(file.path(script_dir, "splash_prepare.R"))  # for resimulate_with_locks
+source(file.path(script_dir, "contest_mc_sim.R"))  # for solve_optimal_paths_cpp
+sourceCpp(file.path(script_dir, "..", "simulate_tourney.cpp"))
 
 # ==============================================================================
 # 1. BUILD BRACKET + KENPOM RATINGS
@@ -167,6 +171,44 @@ sim$teams <- calibrate_ratings_to_lines(
 
 cat(sprintf("\nCalibrated %d team ratings to S16 closing lines\n",
             sum(sim$teams$rating_delta != 0)))
+
+# ==============================================================================
+# 3b. RESIMULATE WITH LOCKED RESULTS + SAVE
+#
+# Build completed_slots from confirmed R64+R32 winners and re-run the
+# tournament sim so eliminated teams (Florida, Texas Tech, etc.) have 0
+# win probability in all future rounds.  Save to sim_results_2026.rds so
+# run_hodes_optimizer reads the correct simulation.
+# ==============================================================================
+
+cat("\n========================================\n")
+cat("RESIMULATING WITH LOCKED RESULTS\n")
+cat("========================================\n")
+
+completed_slots <- list(
+  R1_d1 = r1_d1_winners,
+  R1_d2 = r1_d2_winners,
+  R2_d1 = r2_d1_winners,
+  R2_d2 = r2_d2_winners
+)
+
+name_map <- build_name_map(
+  teams_dt       = sim$teams,
+  team_names_csv = file.path(script_dir, "..", "team_names.csv")
+)
+
+sim_locked <- resimulate_with_locks(
+  sim             = sim,
+  completed_slots = completed_slots,
+  name_map        = name_map,
+  n_sims          = 2000000L,
+  seed            = 42L
+)
+
+sim_file <- file.path(script_dir, "..", "sim_results_2026.rds")
+saveRDS(sim_locked, sim_file)
+cat(sprintf("Locked sim saved to %s  (%s sims x 63 games)\n",
+            basename(sim_file), format(sim_locked$n_sims, big.mark = ",")))
 
 # ==============================================================================
 # 4. LOAD HODES STANDINGS
@@ -505,15 +547,6 @@ for (i in seq_len(nrow(our_state))) {
 cat("\n========================================\n")
 cat("RUNNING HODES OPTIMIZER\n")
 cat("========================================\n")
-
-sim_file <- file.path(script_dir, "..", "sim_results_2026.rds")
-if (!file.exists(sim_file)) {
-  # Build sim inline from bracket (same approach as Splash pipeline)
-  # This re-simulates using calibrated ratings
-  stop(paste("sim_results_2026.rds not found at:", sim_file,
-             "\nRun the Splash pipeline first (run_day5.R) to generate it,",
-             "or point sim_file to a valid sim RDS."))
-}
 
 result <- run_hodes_optimizer(
   sim_file           = sim_file,

@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(Rscript run_day5_sim_only.R 2>&1)"
+    ]
+  }
+}

@@ -546,7 +546,166 @@ precompute_hodes_context <- function(group, current_round, tw, teams_dt,
 }
 
 # ==============================================================================
-# STEP 4: BEAM SEARCH CANDIDATE EV
+# STEP 4: MC CANDIDATE SCORING (mirrors splash contest_mc_sim.R)
+# ==============================================================================
+
+#' 0-indexed game column for a team in a given round (mirrors contest_mc_sim.R)
+game_col_for_team <- function(team_id, round_num) {
+  ROUND_BASE <- c(0L, 32L, 48L, 56L, 60L, 62L)
+  ROUND_BASE[round_num] + as.integer(ceiling(team_id / 2^round_num)) - 1L
+}
+
+#' Build per-sim × per-remaining-round matrix of expected field entries alive.
+#'
+#' Uses ownership vectors from own_by_round and the team win matrices to
+#' compute, for each sim, how many field entries survive each remaining round.
+#' This is the hodes equivalent of splash's n_alive_matrix from entry_field_sim.
+#'
+#' @param remaining_rounds Integer vector of remaining round numbers
+#' @param tw Precomputed team-round win matrices
+#' @param own_by_round Named list "3".."6" -> ownership count vectors
+#' @param teams_dt Teams data frame
+#' @param sample_idx Sim indices to use
+#' @param n_field Total number of field entries (contest_size minus our entries)
+#' @return Numeric matrix (length(sample_idx) x length(remaining_rounds))
+build_hodes_n_alive_matrix <- function(remaining_rounds, tw, own_by_round,
+                                        teams_dt, sample_idx, n_field) {
+  n_sims   <- length(sample_idx)
+  n_rounds <- length(remaining_rounds)
+  n_teams  <- nrow(teams_dt)
+  mat      <- matrix(0.0, nrow = n_sims, ncol = n_rounds)
+
+  cum_surv <- rep(1.0, n_sims)  # cumulative P(field entry alive) per sim
+
+  for (si in seq_along(remaining_rounds)) {
+    rd      <- remaining_rounds[si]
+    own_raw <- own_by_round[[as.character(rd)]]
+
+    wp <- tw$team_round_probs[, rd]   # sim-estimated win probs for this round
+
+    own_vec <- numeric(n_teams)
+    if (!is.null(own_raw) && sum(own_raw) > 1e-10) {
+      ids   <- teams_dt$team_id[match(names(own_raw), teams_dt$name)]
+      valid <- !is.na(ids)
+      own_vec[ids[valid]] <- own_raw[names(own_raw)[valid]]
+    }
+    # Normalize to fractions: own_raw may be counts (entry model) or fractions (GAM)
+    s <- sum(own_vec)
+    if (s > 1e-10) own_vec <- own_vec / s
+
+    # Blend with win-probability proportional weights for teams the model missed.
+    # GAM for rounds 4-6 often fails to cover all alive teams (e.g. Michigan, Purdue),
+    # leaving their n_field_alive=0 in those sims and making the C++ think we win alone.
+    wp_s <- sum(wp)
+    if (wp_s > 1e-10) {
+      wp_norm    <- wp / wp_s
+      # How well does the model cover teams that are actually likely to win?
+      model_cov  <- sum(own_vec[wp > 0.05])       # model weight on reasonably-likely teams
+      if (model_cov < 0.5) {
+        # Model coverage is poor — use win-prob proportional directly
+        own_vec <- wp_norm
+      } else {
+        # Blend: 80% model + 20% win-prob to fill in any zero gaps
+        own_vec <- 0.8 * own_vec + 0.2 * wp_norm
+        own_vec <- own_vec / sum(own_vec)
+      }
+    }
+
+    wm          <- tw$team_round_wins[[rd]][sample_idx, , drop = FALSE]
+    # P(a random field entry picks the winner of this round) — independent per round
+    p_slot_surv <- as.numeric(wm %*% own_vec)
+
+    cum_surv  <- cum_surv * p_slot_surv
+    mat[, si] <- cum_surv * n_field
+  }
+  mat
+}
+
+#' Score all candidates for a hodes entry group using forward-knowledge MC.
+#'
+#' Hodes-specific wrapper around solve_optimal_paths_cpp — uses round numbers
+#' (3-6) instead of splash slot IDs, and assumes 1 pick per round for S16+.
+#' For each candidate S16 pick, the C++ finds the optimal future path across
+#' E8/FF/Champ using full knowledge of each sim's outcomes.
+#'
+#' @param group A row from group_hodes_entries() with used_teams, prize_pool, etc.
+#' @param current_round Integer round number (3=S16, 4=E8, 5=FF, 6=Champ)
+#' @param sim Sim object with all_results (n_sims x 63)
+#' @param teams_dt Teams data frame (64 rows)
+#' @param sample_idx Integer vector of sim indices to use
+#' @param n_field_alive_matrix Numeric matrix (length(sample_idx) x n_remaining_rounds)
+#' @param viable_cids Integer vector of alive team_ids for the current round
+#' @return data.table with columns: team_id, team_name, ev, p_survive_today,
+#'         p_win_contest, mean_death_rd. Has "death_rounds" attribute (matrix).
+mc_score_hodes_candidates <- function(group, current_round, sim, teams_dt,
+                                       sample_idx, n_field_alive_matrix,
+                                       viable_cids) {
+  remaining_rounds <- current_round:6L
+  n_remaining      <- length(remaining_rounds)
+  used_teams       <- group$used_teams[[1]]
+  wf               <- group$winner_fraction %||% 0.931
+  effective_prize  <- as.double(group$prize_pool * wf)
+
+  ar_sub <- sim$all_results[sample_idx, , drop = FALSE]
+
+  # Build slot metadata for C++
+  slot_team_ids_list  <- vector("list", n_remaining)
+  slot_game_cols_list <- vector("list", n_remaining)
+  slot_n_picks        <- rep(1L, n_remaining)
+  slot_round_nums     <- as.integer(remaining_rounds)
+
+  for (si in seq_along(remaining_rounds)) {
+    rd    <- remaining_rounds[si]
+    # Current slot: use alive teams only; future slots: all 64 (C++ filters by winner)
+    cands <- if (si == 1L) viable_cids else teams_dt$team_id
+    gcols <- vapply(cands, function(tid) game_col_for_team(tid, rd), integer(1))
+    slot_team_ids_list[[si]]  <- as.integer(cands)
+    slot_game_cols_list[[si]] <- as.integer(gcols)
+  }
+
+  first_cands <- viable_cids[!viable_cids %in% used_teams]
+  if (length(first_cands) == 0L) {
+    return(data.table(team_id = integer(0), team_name = character(0),
+                      ev = numeric(0), p_survive_today = numeric(0),
+                      p_win_contest = numeric(0), mean_death_rd = numeric(0)))
+  }
+
+  first_gcols <- vapply(first_cands,
+    function(tid) game_col_for_team(tid, remaining_rounds[1L]), integer(1))
+
+  cpp_result <- solve_optimal_paths_cpp(
+    all_results         = ar_sub,
+    n_field_alive       = n_field_alive_matrix,
+    slot_team_ids_list  = slot_team_ids_list,
+    slot_game_cols_list = slot_game_cols_list,
+    slot_n_picks        = slot_n_picks,
+    slot_round_nums     = slot_round_nums,
+    used_teams_vec      = as.integer(used_teams),
+    first_slot_cands    = as.integer(first_cands),
+    first_slot_gcols    = as.integer(first_gcols),
+    prize_pool          = effective_prize,
+    n_slots             = as.integer(n_remaining)
+  )
+
+  p_today <- vapply(seq_along(first_cands), function(i) {
+    gcol <- first_gcols[i] + 1L   # 1-indexed for R
+    mean(ar_sub[, gcol] == first_cands[i])
+  }, numeric(1))
+
+  result_dt <- data.table(
+    team_id         = first_cands,
+    team_name       = teams_dt$name[first_cands],
+    ev              = cpp_result$ev,
+    p_survive_today = p_today,
+    p_win_contest   = cpp_result$p_survive,
+    mean_death_rd   = cpp_result$mean_death
+  )
+  attr(result_dt, "death_rounds") <- cpp_result$death_rounds
+  result_dt
+}
+
+# ==============================================================================
+# STEP 4b: BEAM SEARCH CANDIDATE EV (kept for multi-pick rounds R1/R2)
 # ==============================================================================
 
 #' Compute EV for a candidate primary pick using beam search.
@@ -1010,14 +1169,12 @@ optimize_hodes_today <- function(state, current_round, sim, tw, teams_dt,
     cat(sprintf("\n--- Group %d/%d: %d entries, %d field ---\n",
                 gi, nrow(groups), g$n_entries, g$contest_size))
 
-    ctx <- precompute_hodes_context(g, current_round, tw, teams_dt, own_by_round, sample_idx)
-
     avail_cids <- setdiff(candidate_ids, g$used_teams[[1]])
     seen_triples <- character(0)  # dedup within group
 
     if (n_companions >= 1L) {
-      # Full enumeration mode: for each primary, enumerate top-K companion combos
-      # and run full beam search for each to properly value bracket-position synergies
+      # Full enumeration mode: beam search with companion enumeration (R1/R2 only)
+      ctx <- precompute_hodes_context(g, current_round, tw, teams_dt, own_by_round, sample_idx)
       all_comp_pool <- setdiff(which(tw$team_round_probs[, current_round] > 0.01),
                                 g$used_teams[[1]])
       n_total_evals <- 0L
@@ -1102,34 +1259,43 @@ optimize_hodes_today <- function(state, current_round, sim, tw, teams_dt,
       }
       pg$done()
     } else {
-      # Single-pick rounds: no companions needed
-      pg <- make_progress(length(avail_cids), sprintf("Grp %d scoring", gi))
-      for (cid in avail_cids) {
-        result <- compute_hodes_candidate_ev(cid, ctx, tw, pick_s16opt = pick_s16opt)
-        triple_key <- paste(c(g$group_id, cid), collapse = ":")
-        seen_triples <- c(seen_triples, triple_key)
-        death_rd_cache[[triple_key]] <- result$our_death_rd
+      # Single-pick rounds (S16, E8, FF, Champ): MC scoring via solve_optimal_paths_cpp
+      n_field <- g$contest_size - g$n_entries
+      remaining_rounds <- current_round:6L
+      n_alive_mat <- build_hodes_n_alive_matrix(remaining_rounds, tw, own_by_round,
+                                                 teams_dt, sample_idx, n_field)
+      cat(sprintf("  n_field_alive_matrix summary (rounds %s):\n", paste(remaining_rounds, collapse=",")))
+      for (ci in seq_along(remaining_rounds)) {
+        col <- n_alive_mat[, ci]
+        cat(sprintf("    Round %d: mean=%.2f, median=%.2f, min=%.4f, max=%.2f, pct_zero=%.1f%%\n",
+            remaining_rounds[ci], mean(col), median(col), min(col), max(col), 100*mean(col < 0.01)))
+      }
+      cat(sprintf("  MC scoring %d candidates...\n", length(avail_cids)))
+      mc_result <- mc_score_hodes_candidates(g, current_round, sim, teams_dt,
+                                              sample_idx, n_alive_mat, avail_cids)
+      mc_deaths <- attr(mc_result, "death_rounds")  # matrix: n_cands x n_sims
 
-        s16opt_name <- if (!is.na(result$s16opt_id)) teams_dt$name[result$s16opt_id] else NA_character_
+      for (k in seq_len(nrow(mc_result))) {
+        r          <- mc_result[k]
+        triple_key <- paste(c(g$group_id, r$team_id), collapse = ":")
+        death_rd_cache[[triple_key]] <- if (!is.null(mc_deaths)) mc_deaths[k, ] else integer(sim_sample_size)
 
         all_scores[[length(all_scores) + 1]] <- data.table(
           group_id        = g$group_id,
           contest_id      = g$contest_id,
           n_entries       = g$n_entries,
-          team_name       = teams_dt$name[cid],
-          team_id         = cid,
+          team_name       = r$team_name,
+          team_id         = r$team_id,
           triple_key      = triple_key,
-          ev              = result$ev,
-          p_survive_today = result$p_survive_today,
-          p_win_contest   = result$p_win_contest,
-          mean_death_rd   = result$mean_death_rd,
-          seed_sum        = result$seed_sum,
+          ev              = r$ev,
+          p_survive_today = r$p_survive_today,
+          p_win_contest   = r$p_win_contest,
+          mean_death_rd   = r$mean_death_rd,
+          seed_sum        = teams_dt$seed[r$team_id],
           extra_names     = NA_character_,
-          s16opt_name     = s16opt_name
+          s16opt_name     = NA_character_
         )
-        pg$tick()
       }
-      pg$done()
     }
   }
 
@@ -1168,11 +1334,13 @@ optimize_hodes_today <- function(state, current_round, sim, tw, teams_dt,
     top_viable <- max(n_ent, min(nrow(gs), sum(gs$ev > 0.001)))
     gs <- gs[1:top_viable]
 
+    entry_ids_g <- g$entry_ids[[1]]
     if (n_ent <= 3L || nrow(gs) <= 1L) {
       best <- gs[1]
       allocation_list[[length(allocation_list) + 1]] <- data.table(
         contest_id      = g$contest_id,
         group_id        = g$group_id,
+        entry_label     = paste(entry_ids_g, collapse = ", "),
         team_name       = best$team_name,
         team_id         = best$team_id,
         triple_key      = best$triple_key,
@@ -1260,11 +1428,17 @@ optimize_hodes_today <- function(state, current_round, sim, tw, teams_dt,
         current_at_best <- best_k_at_best
       }
 
+      assigned_idx <- 0L
       for (k in seq_len(top_n)) {
         if (alloc[k] > 0L) {
+          entry_label_k <- if (length(entry_ids_g) >= assigned_idx + alloc[k])
+            paste(entry_ids_g[(assigned_idx + 1L):(assigned_idx + alloc[k])], collapse = ", ")
+          else paste(entry_ids_g, collapse = ", ")
+          assigned_idx <- assigned_idx + alloc[k]
           allocation_list[[length(allocation_list) + 1]] <- data.table(
             contest_id      = g$contest_id,
             group_id        = g$group_id,
+            entry_label     = entry_label_k,
             team_name       = top$team_name[k],
             team_id         = top$team_id[k],
             triple_key      = top$triple_key[k],
@@ -1450,6 +1624,8 @@ print_hodes_allocation <- function(allocation, teams_dt, current_round = NULL) {
 
   setorder(allocation, -n_assigned)
 
+  has_labels <- "entry_label" %in% names(allocation)
+
   if (n_pick == 3L) {
     cat(sprintf("%-40s %6s %8s %8s %6s %10s\n",
                 "Triple (primary + companions)", "Assign", "Rank EV",
@@ -1459,21 +1635,21 @@ print_hodes_allocation <- function(allocation, teams_dt, current_round = NULL) {
       r  <- allocation[i]
       nm <- r$team_name
       if (!is.na(r$extra_names)) nm <- paste0(nm, " + ", r$extra_names)
-      cat(sprintf("%-40s %5d  $%6.2f  %6.1f%%  %.3f%%   %4d\n",
+      lbl <- if (has_labels && !is.na(r$entry_label)) sprintf("  [%s]", r$entry_label) else ""
+      cat(sprintf("%-40s %5d  $%6.2f  %6.1f%%  %.3f%%   %4d%s\n",
                   nm, r$n_assigned, r$ev,
-                  100 * r$p_survive_today, 100 * r$p_win_contest, r$seed_sum))
+                  100 * r$p_survive_today, 100 * r$p_win_contest, r$seed_sum, lbl))
     }
   } else {
-    cat(sprintf("%-30s %6s %8s %8s %6s %12s\n",
-                "Team", "Assign", "Rank EV", "P(surv)", "P(win)",
-                if (!is.null(current_round) && current_round == 3L) "S16_opt" else ""))
+    cat(sprintf("%-22s %-30s %8s %8s %6s\n",
+                "Entry", "Team", "Rank EV", "P(surv)", "P(win)"))
     cat(paste(rep("-", 80), collapse = ""), "\n")
     for (i in seq_len(nrow(allocation))) {
-      r  <- allocation[i]
-      opt_str <- if (!is.na(r$s16opt_name)) sprintf("[opt: %s]", r$s16opt_name) else ""
-      cat(sprintf("%-30s %5d  $%6.2f  %6.1f%%  %.3f%% %s\n",
-                  r$team_name, r$n_assigned, r$ev,
-                  100 * r$p_survive_today, 100 * r$p_win_contest, opt_str))
+      r   <- allocation[i]
+      lbl <- if (has_labels && !is.na(r$entry_label)) r$entry_label else ""
+      cat(sprintf("%-22s %-30s $%6.2f  %6.1f%%  %.3f%%\n",
+                  lbl, r$team_name, r$ev,
+                  100 * r$p_survive_today, 100 * r$p_win_contest))
     }
   }
 
