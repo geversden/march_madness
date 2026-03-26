@@ -1,0 +1,64 @@
+Seed,Team,previous_usage_raw,previous_usage_perc,raw_picks,pick_perc,Round
+4,Kansas,,,83,32.3%,1
+3,Gonzaga,,,71,27.6%,1
+3,Virginia,,,69,26.8%,1
+4,Nebraska,,,65,25.3%,1
+7,UCLA,,,45,17.5%,1
+4,Arkansas,,,44,17.1%,1
+5,Vanderbilt,,,42,16.3%,1
+5,St John's,,,38,14.8%,1
+6,Tennessee,,,31,12.1%,1
+4,Alabama,,,30,11.7%,1
+3,Michigan St,,,27,10.5%,1
+9,Utah State,,,26,10.1%,1
+2,UConn,,,26,10.1%,1
+11,VCU,,,24,9.3%,1
+2,Purdue,,,22,8.6%,1
+9,Iowa,,,21,8.2%,1
+3,Illinois,,,21,8.2%,1
+7,Kentucky,,,14,5.4%,1
+6,Louisville,,,10,3.9%,1
+5,Texas Tech,,,10,3.9%,1
+11,Texas,,,8,3.1%,1
+2,Iowa State,,,7,2.7%,1
+10,Texas A&M,,,7,2.7%,1
+9,Saint Louis,,,6,2.3%,1
+2,Houston,,,6,2.3%,1
+9,TCU,,,4,1.6%,1
+7,Miami,,,3,1.2%,1
+1,Duke,,,3,1.2%,1
+1,Michigan,,,3,1.2%,1
+1,Florida,,,3,1.2%,1
+12,High Point,,,1,0.4%,1
+1,Arizona,,,1,0.4%,1
+4,Arkansas,44,17.1%,147,57.2%,2
+3,Illinois,21,8.2%,145,56.4%,2
+2,Houston,6,2.3%,69,26.8%,2
+6,Tennessee,31,12.1%,64,24.9%,2
+3,Michigan St,27,10.5%,61,23.7%,2
+5,St John's,38,14.8%,54,21.0%,2
+2,Purdue,22,8.6%,53,20.6%,2
+2,Iowa State,7,2.7%,41,16.0%,2
+1,Duke,3,1.2%,33,12.8%,2
+11,Texas,8,3.1%,32,12.5%,2
+2,UConn,26,10.1%,29,11.3%,2
+4,Alabama,30,11.7%,17,6.6%,2
+1,Michigan,3,1.2%,10,3.9%,2
+4,Nebraska,65,25.3%,9,3.5%,2
+1,Arizona,1,0.4%,7,2.7%,2
+4,Arkansas,191,74.3%,,,3
+3,Illinois,166,64.6%,,,3
+6,Tennessee,95,37.0%,,,3
+5,St John's,92,35.8%,,,3
+3,Michigan St,88,34.2%,,,3
+2,Houston,75,29.2%,,,3
+2,Purdue,75,29.2%,,,3
+4,Nebraska,74,28.8%,,,3
+2,UConn,55,21.4%,,,3
+2,Iowa State,48,18.7%,,,3
+4,Alabama,47,18.3%,,,3
+11,Texas,40,15.6%,,,3
+1,Duke,36,14.0%,,,3
+9,Iowa,21,8.2%,,,3
+1,Michigan,13,5.1%,,,3
+1,Arizona,8,3.1%,,,3
