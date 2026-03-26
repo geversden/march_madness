@@ -1778,12 +1778,24 @@ optimize_today <- function(state, candidates, current_slot_id, sim, tw,
       stop("method='mc' requires entry_field_data (entry-level field simulation)")
     }
 
+    mc_low_ev_printed <- FALSE
+    mc_high_ev_printed <- FALSE
+
     for (gi in seq_len(nrow(groups))) {
       g <- groups[gi]
       if (gi == 1 || g$contest_id != groups[gi - 1]$contest_id) {
         n_contest_groups <- sum(groups$contest_id == g$contest_id)
-        cat(sprintf("\n--- Contest %s: %d groups, %d field ---\n",
-                    substr(g$contest_id, 1, 12), n_contest_groups, g$contest_size))
+        ct_entry_tmp <- entry_field_data[[g$contest_id]]
+        if (!is.null(ct_entry_tmp)) {
+          nfa_final <- ct_entry_tmp$n_alive_matrix[sample_idx, ncol(ct_entry_tmp$n_alive_matrix)]
+          prize <- g$prize_pool
+          ev_per_survivor <- mean(prize / (1 + nfa_final))
+          cat(sprintf("\n--- Contest %s: %d groups, %d field, E[prize/(1+n_alive_final)]=$%.0f ---\n",
+                      substr(g$contest_id, 1, 12), n_contest_groups, g$contest_size, ev_per_survivor))
+        } else {
+          cat(sprintf("\n--- Contest %s: %d groups, %d field ---\n",
+                      substr(g$contest_id, 1, 12), n_contest_groups, g$contest_size))
+        }
       }
 
       # Get entry-level field data for this contest
@@ -1835,10 +1847,84 @@ optimize_today <- function(state, candidates, current_slot_id, sim, tw,
 
       if (nrow(mc_result) == 0) next
 
-      cat(sprintf("  Group %d/%d: %d candidates scored in %.1fs (top: %s=$%.2f)\n",
-                  gi, nrow(groups), nrow(mc_result), mc_elapsed,
-                  mc_result$team_name[which.max(mc_result$ev)],
-                  max(mc_result$ev)))
+      # Cache death_rounds from MC for portfolio EV computation
+      mc_death_rounds <- attr(mc_result, "death_rounds")
+      if (!is.null(mc_death_rounds)) {
+        for (k in seq_len(nrow(mc_result))) {
+          cache_key <- paste0(g$group_id, ":", mc_result$team_id[k])
+          death_rd_cache[[cache_key]] <- as.integer(mc_death_rounds[k, ])
+        }
+      } else if (gi == 1) {
+        cat("  WARNING: death_rounds not returned by C++ — recompile simulate_tourney.cpp!\n")
+      }
+
+      # Diagnostic: show used_teams for groups with very low EV
+      top_ev <- max(mc_result$ev)
+      if (top_ev < 0.10) {
+        best_k <- which.max(mc_result$ev)
+        used_names <- teams_dt$name[g$used_teams[[1]]]
+        cat(sprintf("  Group %d/%d: %d candidates scored in %.1fs (top: %s=$%.2f  p_surv=%.4f) [LOW EV] used_teams: %s\n",
+                    gi, nrow(groups), nrow(mc_result), mc_elapsed,
+                    mc_result$team_name[best_k],
+                    top_ev,
+                    mc_result$p_survive_all[best_k],
+                    paste(used_names, collapse = ", ")))
+
+        # Detailed debug for first low-EV group per contest
+        if (gi == 1 || !isTRUE(mc_low_ev_printed)) {
+          mc_low_ev_printed <- TRUE
+          gfmt <- if ("format" %in% names(g)) g$format else "A"
+          so <- get_slot_order(gfmt)
+          cidx <- match(current_slot_id, so)
+          rem <- so[cidx:length(so)]
+          n_sims_mc <- length(sample_idx)
+          cat(sprintf("    --- LOW EV DEBUG (group %d, %d sims) ---\n", g$group_id, n_sims_mc))
+          cat(sprintf("    Remaining slots: %s\n", paste(rem, collapse = " -> ")))
+          cat(sprintf("    n_field_alive dims: %d x %d\n", nrow(ct_n_alive_matrix), ncol(ct_n_alive_matrix)))
+          nfa_means <- colMeans(ct_n_alive_matrix)
+          cat(sprintf("    n_field_alive means: %s\n",
+                      paste(sprintf("%.1f", nfa_means), collapse = ", ")))
+
+          # Per-candidate summary from mc_result
+          for (k in seq_len(nrow(mc_result))) {
+            r <- mc_result[k]
+            cat(sprintf("    %s: EV=$%.4f  p_today=%.3f  p_survive_all=%.6f  mean_death=%.2f\n",
+                        r$team_name, r$ev, r$p_survive_today, r$p_survive_all, r$mean_death_rd))
+          }
+
+          # Check death_rounds attribute
+          dr <- attr(mc_result, "death_rounds")
+          if (!is.null(dr)) {
+            cat(sprintf("    death_rounds: %d x %d matrix\n", nrow(dr), ncol(dr)))
+            # Show death distribution for top candidate
+            best_k <- which.max(mc_result$ev)
+            dr_k <- dr[best_k, ]
+            death_tab <- table(factor(dr_k, levels = 0:6))
+            cat(sprintf("    %s death dist: [%s]\n",
+                        mc_result$team_name[best_k],
+                        paste(sprintf("rd%d=%d", 0:6, death_tab), collapse = " ")))
+          } else {
+            cat("    death_rounds: NULL (C++ not recompiled?)\n")
+          }
+          cat("    ---\n")
+        }
+      } else {
+        best_k <- which.max(mc_result$ev)
+        r <- mc_result[best_k]
+        used_names <- teams_dt$name[g$used_teams[[1]]]
+        # Compact diagnostics: EV, p_surv, conditional n_alive, conditional payout, max payout, die_zero count
+        surv_info <- ""
+        if ("mean_n_alive_surv" %in% names(mc_result) && !is.na(r$mean_n_alive_surv)) {
+          surv_info <- sprintf("  E[n_alive|surv]=%.0f  E[payout|surv]=$%.0f  max=$%.0f  die0=%d",
+                               r$mean_n_alive_surv, r$mean_payout_surv,
+                               r$max_payout, r$die_zero_alive)
+        }
+        cat(sprintf("  Group %d/%d: %d cands in %.1fs (top: %s=$%.2f  p_surv=%.4f%s) | used: %s\n",
+                    gi, nrow(groups), nrow(mc_result), mc_elapsed,
+                    r$team_name, top_ev, r$p_survive_all,
+                    surv_info,
+                    paste(used_names, collapse = ", ")))
+      }
 
       # Convert to all_scores format
       for (k in seq_len(nrow(mc_result))) {

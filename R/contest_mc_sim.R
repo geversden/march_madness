@@ -41,7 +41,7 @@ game_col_for_team <- function(team_id, round_num) {
 #' @param sim Sim object with all_results
 #' @param teams_dt Teams data frame
 #' @return Integer vector of team_ids that reached this round
-get_slot_candidates <- function(slot_id, sim, teams_dt) {
+get_slot_candidates <- function(slot_id, sim, teams_dt, current_round = NULL) {
   slot_def <- get_slot(slot_id)
   round_num <- slot_def$round_num
 
@@ -55,18 +55,40 @@ get_slot_candidates <- function(slot_id, sim, teams_dt) {
     return(unique(team_ids))
   }
 
-  # For R2+: candidates are winners of the feeder round
-  # Use row 1 of all_results (locked games are identical across all sims)
-  actual_winners <- as.integer(sim$all_results[1, ])
-  candidates <- integer(0)
+  # For rounds whose feeders are locked (already played), use sim 1 winners.
+  # For rounds whose feeders are sim-dependent (not yet played), include ALL
+  # teams that could bracket into each game. The DFS's
+  # all_results(sim, gcol) == tid check will filter to actual winners per sim.
+  #
+  # Feeders are locked if feeder_round < current_round (the round being decided today).
+  # E.g., if current_round=3 (S16), then R64/R32 feeders are locked, but S16+ feeders are not.
+  feeder_round <- round_num - 1L
+  feeders_locked <- !is.null(current_round) && feeder_round < current_round
 
-  for (g in slot_def$game_indices) {
-    feeders <- get_feeder_games(g)
-    for (fg in feeders) {
-      w <- actual_winners[fg]
-      if (!is.na(w) && w > 0) {
-        candidates <- c(candidates, w)
+  if (feeders_locked) {
+    # Feeders already played — use sim 1 winners (all sims agree)
+    actual_winners <- as.integer(sim$all_results[1, ])
+    candidates <- integer(0)
+    for (g in slot_def$game_indices) {
+      feeders <- get_feeder_games(g)
+      for (fg in feeders) {
+        w <- actual_winners[fg]
+        if (!is.na(w) && w > 0) {
+          candidates <- c(candidates, w)
+        }
       }
+    }
+  } else {
+    # Feeders NOT locked — include all teams that could bracket into each game.
+    # For a game at round R, 0-indexed position p within the round,
+    # the team_ids are: (p * 2^R + 1) through ((p+1) * 2^R).
+    ROUND_BASE <- c(0L, 32L, 48L, 56L, 60L, 62L)
+    candidates <- integer(0)
+    for (g in slot_def$game_indices) {
+      p <- g - ROUND_BASE[round_num] - 1L  # 0-indexed position within round
+      first_tid <- p * (2L^round_num) + 1L
+      last_tid <- (p + 1L) * (2L^round_num)
+      candidates <- c(candidates, seq.int(first_tid, last_tid))
     }
   }
   unique(candidates)
@@ -116,8 +138,10 @@ mc_score_candidates <- function(group, current_slot_id, sim, teams_dt,
     round_num <- slot_def$round_num
     n_picks <- get_n_picks(sid, format)
 
-    # Get candidates for this slot
-    cands <- get_slot_candidates(sid, sim, teams_dt)
+    # Get candidates for this slot (pass current_round so future slots
+    # enumerate all bracket-possible teams instead of using sim-1 winners)
+    current_round <- get_slot(current_slot_id)$round_num
+    cands <- get_slot_candidates(sid, sim, teams_dt, current_round = current_round)
 
     # Build game columns (0-indexed for C++)
     gcols <- vapply(cands, function(tid) {
@@ -174,15 +198,27 @@ mc_score_candidates <- function(group, current_slot_id, sim, teams_dt,
     mean(ar_sub[, gcol] == tid)
   }, numeric(1))
 
-  data.table(
+  result_dt <- data.table(
     team_id         = first_cands,
     team_name       = teams_dt$name[first_cands],
     ev              = cpp_result$ev,
     p_survive_today = p_today,
-    p_win_contest   = cpp_result$p_survive,  # approximate: survive all ≈ win
+    p_win_contest   = cpp_result$p_survive,
     mean_death_rd   = cpp_result$mean_death,
-    p_survive_all   = cpp_result$p_survive
+    p_survive_all   = cpp_result$p_survive,
+    mean_n_alive_surv = if (!is.null(cpp_result$mean_n_alive_when_survived))
+                          cpp_result$mean_n_alive_when_survived else NA_real_,
+    mean_payout_surv  = if (!is.null(cpp_result$mean_payout_when_survived))
+                          cpp_result$mean_payout_when_survived else NA_real_,
+    max_payout        = if (!is.null(cpp_result$max_payout))
+                          cpp_result$max_payout else NA_real_,
+    die_zero_alive    = if (!is.null(cpp_result$die_with_zero_alive))
+                          cpp_result$die_with_zero_alive else NA_integer_
   )
+  # Attach per-candidate x per-sim death rounds matrix for portfolio EV
+  # Rows = candidates (same order as first_cands), Cols = sims
+  attr(result_dt, "death_rounds") <- cpp_result$death_rounds
+  result_dt
 }
 
 cat("Forward-knowledge MC scoring loaded\n")
