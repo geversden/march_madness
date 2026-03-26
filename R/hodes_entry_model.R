@@ -462,6 +462,143 @@ predict_hodes_pick <- function(used_teams, candidates_df, n_picks, params,
 
 
 # ==============================================================================
+# ENTRY-LEVEL S16 OWNERSHIP PREDICTION
+# ==============================================================================
+
+#' Predict aggregate S16 ownership from entry pick histories.
+#'
+#' For each alive Hodes entry, uses calibrated entry model to predict:
+#'   - P(take_two): probability of picking S16_opt (from count model)
+#'   - Mandatory pick distribution (1-pick softmax, all entries pick 1)
+#'   - Opt pick distribution (pair-enumeration marginals, only p2 fraction pick)
+#'
+#' Returns aggregate ownership suitable for own_by_round injection into
+#' run_hodes_optimizer() via entry_own_by_round parameter.
+#'
+#' @param hodes_dt data.frame with columns: Rank, Entry, R64_1..R64_3, R32_1..R32_3, TB
+#'   (only alive entries; rows are entries, not eliminated)
+#' @param s16_teams data.frame with columns: bracket_name, seed, wp, game_id, opponent, champ_equity
+#' @param params List from readRDS("hodes_entry_model_params.rds")
+#' @param hodes_to_bracket Named character vector: Hodes short name -> bracket full name
+#' @return Named list:
+#'   own_mandatory: named numeric (team -> expected mandatory picks, sums to ~n_valid)
+#'   own_opt:       named numeric (team -> expected opt picks, sums to ~sum(p2))
+#'   avg_p2:        numeric, mean P(take_two) across valid entries
+#'   n_valid:       integer, entries with at least one available S16 candidate
+predict_hodes_s16_ownership <- function(hodes_dt, s16_teams, params, hodes_to_bracket) {
+  n_entries  <- nrow(hodes_dt)
+  team_names <- s16_teams$bracket_name
+
+  own_mandatory <- setNames(rep(0, length(team_names)), team_names)
+  own_opt       <- setNames(rep(0, length(team_names)), team_names)
+  total_p2 <- 0
+  n_valid  <- 0
+
+  for (e in seq_len(n_entries)) {
+    # Get used teams (convert Hodes names to bracket names)
+    used_hodes <- c(hodes_dt$R64_1[e], hodes_dt$R64_2[e], hodes_dt$R64_3[e],
+                    hodes_dt$R32_1[e], hodes_dt$R32_2[e], hodes_dt$R32_3[e])
+    used_hodes   <- used_hodes[!is.na(used_hodes) & used_hodes != ""]
+    used_bracket <- unname(hodes_to_bracket[used_hodes])
+    used_bracket <- used_bracket[!is.na(used_bracket)]
+
+    # Available S16 candidates (not already used)
+    available <- s16_teams[!(s16_teams$bracket_name %in% used_bracket), ]
+    if (nrow(available) == 0) next
+    n_valid <- n_valid + 1
+
+    # Entry-level features
+    available$opponent_is_used <- as.integer(available$opponent %in% used_bracket)
+
+    # Tiebreaker rank percentile (higher TB = closer to elimination, more incentive to gamble)
+    tb_rank     <- rank(hodes_dt$TB, ties.method = "average")[e]
+    tb_rank_pct <- (tb_rank - 1) / max(n_entries - 1, 1)
+
+    # P(take_two) from count model
+    p2 <- predict_hodes_s16_count(
+      params$count_model,
+      n_alive         = n_entries,
+      tb_rank_pct     = tb_rank_pct,
+      n_available_s16 = nrow(available)
+    )
+    total_p2 <- total_p2 + p2
+
+    # Build candidates_df for predict_hodes_pick
+    candidates_df <- data.frame(
+      team             = available$bracket_name,
+      wp               = available$wp,
+      champ_equity     = available$champ_equity,
+      seed             = available$seed,
+      opponent_is_used = available$opponent_is_used,
+      stringsAsFactors = FALSE
+    )
+
+    # ---- Mandatory pick: 1-pick softmax (every entry picks exactly 1) ----
+    probs_1 <- predict_hodes_pick(used_bracket, candidates_df, 1L, params$s16, "S16")
+
+    # ---- Opt pick: pair enumeration using game_id (only matters when p2 > 0) ----
+    if (p2 > 1e-6 && nrow(available) >= 2) {
+      # Enumerate valid pairs (different games), softmax over pairs, get marginals (sum to 2)
+      n_cands    <- nrow(available)
+      game_id    <- available$game_id
+      fv_total   <- sum(available$champ_equity, na.rm = TRUE)
+      fv_frac    <- available$champ_equity / max(fv_total, 1e-10)
+
+      scores <- .compute_scores(
+        available$wp, fv_frac, available$opponent_is_used, available$seed,
+        params$s16, round_name = "S16"
+      )
+
+      pair_scores  <- c()
+      pair_indices <- list()
+      pi <- 0
+      for (a in seq_len(n_cands - 1)) {
+        for (b in (a + 1):n_cands) {
+          if (game_id[a] != game_id[b]) {
+            pi <- pi + 1
+            pair_scores <- c(pair_scores, scores[a] + scores[b])
+            pair_indices[[pi]] <- c(a, b)
+          }
+        }
+      }
+
+      if (length(pair_scores) > 0) {
+        log_pp     <- .log_softmax(pair_scores)
+        pair_probs <- exp(log_pp)
+        # Marginals sum to 2 (two picks); divide by 2 to get per-pick opt distribution
+        marginals <- rep(0, n_cands)
+        for (k in seq_along(pair_indices)) {
+          marginals[pair_indices[[k]][1]] <- marginals[pair_indices[[k]][1]] + pair_probs[k]
+          marginals[pair_indices[[k]][2]] <- marginals[pair_indices[[k]][2]] + pair_probs[k]
+        }
+        probs_opt <- marginals / 2  # normalize to sum to 1
+      } else {
+        probs_opt <- probs_1 / sum(probs_1)
+        p2 <- 0
+      }
+    } else {
+      probs_opt <- probs_1 / sum(probs_1)
+      p2 <- 0
+    }
+
+    # Accumulate: all entries contribute to mandatory; p2 fraction contributes to opt
+    for (t in seq_len(nrow(available))) {
+      tn <- available$bracket_name[t]
+      own_mandatory[tn] <- own_mandatory[tn] + probs_1[t]
+      own_opt[tn]       <- own_opt[tn] + p2 * probs_opt[t]
+    }
+  }
+
+  list(
+    own_mandatory = own_mandatory,
+    own_opt       = own_opt,
+    avg_p2        = if (n_valid > 0) total_p2 / n_valid else 0,
+    n_valid       = n_valid
+  )
+}
+
+
+# ==============================================================================
 # MASTER CALIBRATION
 # ==============================================================================
 
@@ -492,5 +629,6 @@ calibrate_hodes_model <- function(all_data) {
 
 
 cat("hodes_entry_model.R loaded.\n")
-cat("  calibrate_hodes_model(all_data)  -- fit all models\n")
-cat("  predict_hodes_pick(...)          -- predict team probabilities\n")
+cat("  calibrate_hodes_model(all_data)           -- fit all models\n")
+cat("  predict_hodes_pick(...)                   -- predict team probabilities\n")
+cat("  predict_hodes_s16_ownership(...)          -- aggregate S16 ownership from entry histories\n")

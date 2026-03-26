@@ -432,63 +432,61 @@ precompute_hodes_context <- function(group, current_round, tw, teams_dt,
   si_R2  <- match(2L, remaining_rounds)
   si_S16 <- match(3L, remaining_rounds)
 
+  # TB1 uses S16_opt ownership (not mandatory S16) when available.
+  # own_by_round[["3_opt"]] contains expected opt pick counts from entry-level model.
+  # Fall back to mandatory S16 ownership if opt ownership not provided.
+  .build_tb1_p <- function(own_vec_raw, sample_idx, n_teams, teams_dt, tw) {
+    own_vec <- numeric(n_teams)
+    ids <- teams_dt$team_id[match(names(own_vec_raw), teams_dt$name)]
+    v   <- !is.na(ids)
+    own_vec[ids[v]] <- own_vec_raw[names(own_vec_raw)[v]]
+    s <- sum(own_vec)
+    if (s < 1e-12) return(rep(0, length(sample_idx)))
+    wm <- tw$team_round_wins[[3L]][sample_idx, , drop = FALSE]
+    as.numeric(wm %*% own_vec) / s
+  }
+
   if (!is.na(si_S16)) {
-    own_s16 <- own_by_round[["3"]]
-    if (!is.null(own_s16) && length(own_s16) > 0) {
-      own_s16_vec <- numeric(n_teams)
-      s16_ids <- teams_dt$team_id[match(names(own_s16), teams_dt$name)]
-      v <- !is.na(s16_ids)
-      own_s16_vec[s16_ids[v]] <- own_s16[names(own_s16)[v]]
-      s16_sum <- sum(own_s16_vec)
-      if (s16_sum > 1e-12) {
-        win_mat_s16 <- tw$team_round_wins[[3L]][sample_idx, , drop = FALSE]
-        p_s16opt_win <- as.numeric(win_mat_s16 %*% own_s16_vec) / s16_sum
-        # P(field survived first weekend)
-        p_weekend <- if (!is.na(si_R2)) field_cum[, si_R2] else rep(1, n_sims)
-        p_field_tb1 <- p_weekend * p_s16opt_win
-      }
+    own_s16opt <- own_by_round[["3_opt"]] %||% own_by_round[["3"]]
+    if (!is.null(own_s16opt) && length(own_s16opt) > 0) {
+      p_s16opt_win <- .build_tb1_p(own_s16opt, sample_idx, n_teams, teams_dt, tw)
+      p_weekend    <- if (!is.na(si_R2)) field_cum[, si_R2] else rep(1, n_sims)
+      p_field_tb1  <- p_weekend * p_s16opt_win
     }
   } else if (current_round >= 3L) {
-    # S16 is already past; TB1 is decided. Approximate using S16 ownership still.
-    own_s16 <- own_by_round[["3"]]
-    if (!is.null(own_s16) && length(own_s16) > 0) {
-      own_s16_vec <- numeric(n_teams)
-      s16_ids <- teams_dt$team_id[match(names(own_s16), teams_dt$name)]
-      v <- !is.na(s16_ids)
-      own_s16_vec[s16_ids[v]] <- own_s16[names(own_s16)[v]]
-      s16_sum <- sum(own_s16_vec)
-      if (s16_sum > 1e-12) {
-        win_mat_s16 <- tw$team_round_wins[[3L]][sample_idx, , drop = FALSE]
-        p_field_tb1 <- as.numeric(win_mat_s16 %*% own_s16_vec) / s16_sum
-      }
+    # S16 is already past; TB1 is decided. Use opt ownership if available.
+    own_s16opt <- own_by_round[["3_opt"]] %||% own_by_round[["3"]]
+    if (!is.null(own_s16opt) && length(own_s16opt) > 0) {
+      p_field_tb1 <- .build_tb1_p(own_s16opt, sample_idx, n_teams, teams_dt, tw)
     }
   }
 
   # ---- 5. V_die_base[sim, round] — payout if we die in each round ----
-  # Mid-round deaths: no consolation pool. Tiebreaker winner gets effective_prize
-  # (93.1% of raw pool). No bonus for dying mid-round with co-deaths.
+  # No tiebreaker shares: win only if we are strictly last (no co-deaths, no outlasters).
+  # P(win | die at round d) = P(all field entries die strictly before round d).
   V_die <- matrix(0, nrow = n_sims, ncol = max_round)
   for (d in 1:max_round) {
     p_outlast <- p_field_all
     if (d < max_round) {
       for (rd in (d + 1):max_round) p_outlast <- p_outlast + field_dies_round[, rd]
     }
-    p_nobody <- (1 - p_outlast)^full_field
-    expected_same <- field_dies_round[, d] * full_field
-    V_die[, d] <- p_nobody * effective_prize / (1 + expected_same)
+    # P(field entry dies strictly before round d) = 1 - p_outlast - P(co-die in round d)
+    p_no_tie <- pmax(1 - p_outlast - field_dies_round[, d], 0)^full_field
+    V_die[, d] <- p_no_tie * effective_prize
   }
 
   # ---- 6. V_die_tb1[sim, round] — TB1-adjusted payout ----
-  # When we have TB1, effective competition = only field entries that also have TB1
-  V_die_tb1 <- V_die  # same for rounds 1-2 (TB1 not applicable)
+  # With TB1: a field entry "blocks" us only if it outlasts us OR co-dies with TB1.
+  # P(no blocker) = P(field entry dies before rd d, OR co-dies without TB1)^full_field
+  #               = (1 - p_outlast - field_dies_round[,d] * p_field_tb1)^full_field
+  V_die_tb1 <- V_die  # rounds 1-2: TB1 not applicable, same as base
   for (d in 3:max_round) {
-    field_same_base <- field_dies_round[, d] * full_field
-    field_same_tb1  <- field_same_base * p_field_tb1
-    # V_die[,d] = p_nobody * effective_prize / (1 + field_same_base)
-    # V_die_tb1[,d] = p_nobody * effective_prize / (1 + field_same_tb1)
-    # => V_die_tb1[,d] = V_die[,d] * (1 + field_same_base) / (1 + field_same_tb1)
-    ratio <- (1 + field_same_base) / pmax(1 + field_same_tb1, 1e-12)
-    V_die_tb1[, d] <- V_die[, d] * ratio
+    p_outlast <- p_field_all
+    if (d < max_round) {
+      for (rd in (d + 1):max_round) p_outlast <- p_outlast + field_dies_round[, rd]
+    }
+    p_no_tie_tb1 <- pmax(1 - p_outlast - field_dies_round[, d] * p_field_tb1, 0)^full_field
+    V_die_tb1[, d] <- p_no_tie_tb1 * effective_prize
   }
 
   # ---- 7. V_survive[sim, slot] — backward-recursed continuation value ----
@@ -569,7 +567,8 @@ compute_hodes_candidate_ev <- function(primary_id, ctx, tw,
                                         diagnostics = FALSE,
                                         beam_width = 6L, expand_top = 5L,
                                         comp_jitter = 0,
-                                        companion_ids = NULL) {
+                                        companion_ids = NULL,
+                                        pick_s16opt = TRUE) {
   n_sims          <- ctx$n_sims
   max_round       <- ctx$max_round
   n_remaining     <- ctx$n_remaining
@@ -763,28 +762,31 @@ compute_hodes_candidate_ev <- function(primary_id, ctx, tw,
           if (rd == 3L && sid == "S16") {
             # Update alive_after_r2 if we just came from R2
             if (any(is.na(new_alive_r2))) {
-              # alive_after_r2 would have been set after R2; use path$cum_survive
               new_alive_r2 <- path$cum_survive > 0
             }
 
-            # Pick S16_opt greedily: best available S16 team
-            s16opt_pool <- setdiff(which(tw$team_round_probs[, 3L] > 1e-6), new_used)
-            s16opt_compat <- Filter(function(tid)
-              is_hodes_bracket_compatible(tid, 3L, new_bt, new_br),
-              s16opt_pool)
+            if (pick_s16opt) {
+              # Pick S16_opt greedily: best available S16 team
+              s16opt_pool <- setdiff(which(tw$team_round_probs[, 3L] > 1e-6), new_used)
+              s16opt_compat <- Filter(function(tid)
+                is_hodes_bracket_compatible(tid, 3L, new_bt, new_br),
+                s16opt_pool)
 
-            if (length(s16opt_compat) > 0) {
-              s16opt_probs <- tw$team_round_probs[s16opt_compat, 3L]
-              best_s16opt  <- s16opt_compat[which.max(s16opt_probs)]
-              new_s16opt_id <- best_s16opt
-              # S16_opt only "wins" if entry survived weekend AND S16_opt team wins S16
-              new_s16opt_wins <- new_alive_r2 & as.logical(
-                tw$team_round_wins[[3L]][ctx$sample_idx, best_s16opt])
-              new_used <- c(new_used, best_s16opt)
-              new_bt   <- c(new_bt, best_s16opt)
-              new_br   <- c(new_br, 3L)
-              new_seed_sum <- new_seed_sum + teams_dt$seed[best_s16opt]
+              if (length(s16opt_compat) > 0) {
+                s16opt_probs <- tw$team_round_probs[s16opt_compat, 3L]
+                best_s16opt  <- s16opt_compat[which.max(s16opt_probs)]
+                new_s16opt_id <- best_s16opt
+                # S16_opt only "wins" if entry survived weekend AND S16_opt team wins S16
+                new_s16opt_wins <- new_alive_r2 & as.logical(
+                  tw$team_round_wins[[3L]][ctx$sample_idx, best_s16opt])
+                new_used <- c(new_used, best_s16opt)
+                new_bt   <- c(new_bt, best_s16opt)
+                new_br   <- c(new_br, 3L)
+                new_seed_sum <- new_seed_sum + teams_dt$seed[best_s16opt]
+              }
             }
+            # When pick_s16opt = FALSE: skip S16_opt; s16opt_id stays NA,
+            # s16opt_wins stays FALSE -> EV uses V_die_base (not V_die_tb1)
           }
 
           new_cum     <- path$cum_survive * slot_survive
@@ -895,26 +897,28 @@ compute_hodes_candidate_ev <- function(primary_id, ctx, tw,
       p_win_per_sim[surv_mask] <- 1 / (1 + field_co)
     }
 
-    # Case 2: died in round d — no consolation pool; effective_prize to tiebreaker winner
+    # Case 2: died in round d — no tiebreaker shares; win only if strictly last
     for (d in 1:max_round) {
       mask <- (our_death_rd == d)
       if (!any(mask)) next
 
-      p_outlast <- p_outlast_from[mask, d]
-      p_nobody  <- (1 - p_outlast)^full_field
-
-      has_tb1 <- path$s16opt_wins[mask]
-      field_same_base <- ctx$field_dies_round[mask, d] * full_field
+      p_outlast    <- p_outlast_from[mask, d]
+      field_same_d <- ctx$field_dies_round[mask, d]
+      has_tb1      <- path$s16opt_wins[mask]
 
       if (any(has_tb1)) {
-        # TB1: effective competition = only field entries with TB1
-        eff_same_tb1 <- field_same_base[has_tb1] * ctx$p_field_tb1[mask][has_tb1]
-        payouts[mask][has_tb1]       <- p_nobody[has_tb1] * effective_prize / (1 + eff_same_tb1)
-        p_win_per_sim[mask][has_tb1] <- p_nobody[has_tb1] / (1 + eff_same_tb1)
+        # TB1: blocked only by field entries that outlast us OR co-die with TB1
+        p_no_tie_tb1 <- pmax(
+          1 - p_outlast[has_tb1] - field_same_d[has_tb1] * ctx$p_field_tb1[mask][has_tb1], 0
+        )^full_field
+        payouts[mask][has_tb1]       <- p_no_tie_tb1 * effective_prize
+        p_win_per_sim[mask][has_tb1] <- p_no_tie_tb1
       }
       if (any(!has_tb1)) {
-        payouts[mask][!has_tb1]       <- p_nobody[!has_tb1] * effective_prize / (1 + field_same_base[!has_tb1])
-        p_win_per_sim[mask][!has_tb1] <- p_nobody[!has_tb1] / (1 + field_same_base[!has_tb1])
+        # No TB1: blocked by any field entry that outlasts us OR co-dies same round
+        p_no_tie <- pmax(1 - p_outlast[!has_tb1] - field_same_d[!has_tb1], 0)^full_field
+        payouts[mask][!has_tb1]       <- p_no_tie * effective_prize
+        p_win_per_sim[mask][!has_tb1] <- p_no_tie
       }
     }
 
@@ -967,7 +971,8 @@ compute_hodes_candidate_ev <- function(primary_id, ctx, tw,
 #' @return data.table allocation with n_assigned per team triple
 optimize_hodes_today <- function(state, current_round, sim, tw, teams_dt,
                                   own_by_round, candidates = NULL,
-                                  sim_sample_size = 50000L) {
+                                  sim_sample_size = 50000L,
+                                  pick_s16opt = TRUE) {
   groups <- group_hodes_entries(state)
   if (nrow(groups) == 0) { cat("No alive entries.\n"); return(data.table()) }
 
@@ -1069,7 +1074,8 @@ optimize_hodes_today <- function(state, current_round, sim, tw, teams_dt,
           triple_key   <- paste(c(g$group_id, triple_picks), collapse = ":")
           if (triple_key %in% seen_triples) { pg$tick(); next }
 
-          result <- compute_hodes_candidate_ev(cid, ctx, tw, companion_ids = combo)
+          result <- compute_hodes_candidate_ev(cid, ctx, tw, companion_ids = combo,
+                                               pick_s16opt = pick_s16opt)
           seen_triples <- c(seen_triples, triple_key)
           death_rd_cache[[triple_key]] <- result$our_death_rd
 
@@ -1099,7 +1105,7 @@ optimize_hodes_today <- function(state, current_round, sim, tw, teams_dt,
       # Single-pick rounds: no companions needed
       pg <- make_progress(length(avail_cids), sprintf("Grp %d scoring", gi))
       for (cid in avail_cids) {
-        result <- compute_hodes_candidate_ev(cid, ctx, tw)
+        result <- compute_hodes_candidate_ev(cid, ctx, tw, pick_s16opt = pick_s16opt)
         triple_key <- paste(c(g$group_id, cid), collapse = ":")
         seen_triples <- c(seen_triples, triple_key)
         death_rd_cache[[triple_key]] <- result$our_death_rd
@@ -1508,15 +1514,18 @@ print_hodes_allocation <- function(allocation, teams_dt, current_round = NULL) {
 #'   Default: 0.931 (93.1%)
 #' @return Invisible list: allocation, state, sim, tw, teams_dt, own_by_round
 run_hodes_optimizer <- function(sim_file, current_round,
-                                 n_entries       = 21L,
-                                 contest_size    = 1250L,
+                                 n_entries          = 21L,
+                                 contest_size       = 1250L,
                                  prize_pool,
-                                 winner_fraction = 0.931,
-                                 state_file      = NULL,
-                                 candidates      = NULL,
-                                 sim_sample_size = 50000L,
-                                 calibrate       = FALSE,
-                                 csv_dir         = "hodes_usage") {
+                                 winner_fraction    = 0.931,
+                                 state_file         = NULL,
+                                 candidates         = NULL,
+                                 sim_sample_size    = 50000L,
+                                 calibrate          = FALSE,
+                                 csv_dir            = "hodes_usage",
+                                 entry_own_by_round = NULL,
+                                 pick_s16opt        = TRUE,
+                                 initial_state      = NULL) {
   pipeline_start <- proc.time()[["elapsed"]]
 
   # Prize structure:
@@ -1544,7 +1553,11 @@ run_hodes_optimizer <- function(sim_file, current_round,
   tw <- precompute_team_wins(sim)
 
   # Load or init portfolio state
-  if (!is.null(state_file) && file.exists(state_file)) {
+  if (!is.null(initial_state)) {
+    state <- initial_state
+    cat(sprintf("Using provided state: %d entries, %d alive\n",
+                nrow(state), sum(state$alive)))
+  } else if (!is.null(state_file) && file.exists(state_file)) {
     state <- readRDS(state_file)
     cat(sprintf("Loaded state: %d alive entries\n", sum(state$alive)))
   } else {
@@ -1561,29 +1574,58 @@ run_hodes_optimizer <- function(sim_file, current_round,
 
   # Estimate ownership for all rounds from current onward
   cat("\nEstimating field ownership...\n")
-  own_by_round <- list()
-  field_used   <- list()  # cumulative usage across rounds
 
-  for (rd in current_round:6L) {
-    own <- estimate_hodes_ownership(rd, teams_dt, tw, params, field_used)
-    own_by_round[[as.character(rd)]] <- own
-    # Update field_used for next round (teams used in this round)
-    for (nm in names(own)) {
-      prev <- field_used[[nm]] %||% 0
-      field_used[[nm]] <- min(1, prev + own[nm] / max(sum(own), 1))
+  if (!is.null(entry_own_by_round)) {
+    # Use entry-level model ownership provided by caller (e.g. from run_day5_hodes.R).
+    # For rounds not covered, fall back to GAM estimation.
+    own_by_round <- entry_own_by_round
+    covered_rds  <- suppressWarnings(as.integer(setdiff(names(entry_own_by_round), "3_opt")))
+    covered_rds  <- covered_rds[!is.na(covered_rds)]
+    cat("  Using entry-level ownership for rounds:", paste(sort(covered_rds), collapse = ", "), "\n")
+
+    # GAM fill-in for any uncovered rounds
+    field_used <- list()
+    for (rd in current_round:6L) {
+      if (!as.character(rd) %in% names(own_by_round)) {
+        own <- estimate_hodes_ownership(rd, teams_dt, tw, params, field_used)
+        own_by_round[[as.character(rd)]] <- own
+        cat(sprintf("  Round %d (GAM): ", rd))
+      } else {
+        own <- own_by_round[[as.character(rd)]]
+        cat(sprintf("  Round %d (entry-model): ", rd))
+      }
+      for (nm in names(own)) {
+        prev <- field_used[[nm]] %||% 0
+        field_used[[nm]] <- min(1, prev + own[nm] / max(sum(own), 1))
+      }
+      top_n <- head(sort(own[own > 0.001], decreasing = TRUE), 8)
+      cat(paste(sprintf("%s %.0f%%", names(top_n), 100 * top_n), collapse = "  "), "\n")
     }
-    top_own <- sort(own[own > 0.001], decreasing = TRUE)
-    top_n <- head(top_own, 10)
-    cat(sprintf("  Round %d ownership (top %d):\n", rd, length(top_n)))
-    for (j in seq_along(top_n)) {
-      cat(sprintf("    %-20s %5.1f%%\n", names(top_n)[j], 100 * top_n[j]))
+  } else {
+    own_by_round <- list()
+    field_used   <- list()
+
+    for (rd in current_round:6L) {
+      own <- estimate_hodes_ownership(rd, teams_dt, tw, params, field_used)
+      own_by_round[[as.character(rd)]] <- own
+      for (nm in names(own)) {
+        prev <- field_used[[nm]] %||% 0
+        field_used[[nm]] <- min(1, prev + own[nm] / max(sum(own), 1))
+      }
+      top_own <- sort(own[own > 0.001], decreasing = TRUE)
+      top_n <- head(top_own, 10)
+      cat(sprintf("  Round %d ownership (top %d):\n", rd, length(top_n)))
+      for (j in seq_along(top_n)) {
+        cat(sprintf("    %-20s %5.1f%%\n", names(top_n)[j], 100 * top_n[j]))
+      }
     }
   }
 
   # Run optimizer
   allocation <- optimize_hodes_today(
     state, current_round, sim, tw, teams_dt, own_by_round,
-    candidates = candidates, sim_sample_size = sim_sample_size
+    candidates = candidates, sim_sample_size = sim_sample_size,
+    pick_s16opt = pick_s16opt
   )
 
   # Print results
