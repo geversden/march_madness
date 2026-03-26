@@ -747,6 +747,15 @@ List solve_optimal_paths_cpp(
   NumericVector p_survive_out(n_first, 0.0);
   NumericVector mean_death_out(n_first, 0.0);
 
+  // Per-candidate diagnostics
+  NumericVector sum_n_alive_when_survived(n_first, 0.0);
+  NumericVector sum_payout_when_survived(n_first, 0.0);
+  NumericVector max_payout_out(n_first, 0.0);
+  IntegerVector die_with_zero_alive(n_first, 0);  // died but got payout (n_alive_after==0)
+
+  // Per-sim death rounds: 0 = survived all, round_num (1-6) = died in that round
+  IntegerMatrix death_rounds_out(n_first, n_sims);
+
   for (int ci = 0; ci < n_first; ci++) {
     int cand_tid = first_slot_cands[ci];
     int cand_gcol = first_slot_gcols[ci];
@@ -754,28 +763,15 @@ List solve_optimal_paths_cpp(
     double ev_sum = 0.0;
     int survive_count = 0;
     double death_sum = 0.0;
-    int n_valid = 0;  // sims where candidate won slot 0
 
     for (int sim = 0; sim < n_sims; sim++) {
       if (sim % 50000 == 0 && ci == 0) Rcpp::checkUserInterrupt();
 
       // Check if candidate won in this sim
       if (all_results(sim, cand_gcol) != cand_tid) {
-        // Candidate lost in slot 0 → die at slot 0
-        // Payout: exp(-n_field_alive[0]) * prize / (1 + delta_dying)
-        double n_alive_after = n_field_alive(sim, 0);
-        double p_nobody = std::exp(-n_alive_after);
-        // delta_dying: field entries that died in this slot
-        // = n_alive_before - n_alive_after (but we don't have n_alive_before
-        //   directly; for slot 0 it's the full field count at entry)
-        // We approximate using the n_field_alive matrix where column 0 is
-        // alive AFTER slot 0. The "before" count isn't stored, but the
-        // n_dying_same is implicitly captured by V_die formula.
-        // Use simplified: payout = p_nobody * prize / 1
-        // (we die alone on our side; field deaths are in n_alive)
-        double payout = p_nobody * prize_pool;
-        ev_sum += payout;
-        death_sum += 1.0;  // died at slot 0 (1-indexed for output)
+        // Candidate lost in slot 0 — field survivors remain, payout = $0
+        death_sum += 1.0;
+        death_rounds_out(ci, sim) = s_round_nums[0];
         continue;
       }
 
@@ -794,30 +790,41 @@ List solve_optimal_paths_cpp(
         cur_used, cur_bracket, cur_bracket_rds
       );
 
-      // Compute payout based on how far we got
+      // Compute payout: integer field alive counts, simple split
       double payout;
       if (best_depth == n_slots) {
-        // Survived all slots
-        double n_alive_final = n_field_alive(sim, n_slots - 1);
+        // Survived all slots — split prize with surviving field entries
+        int n_alive_final = (int)std::round(n_field_alive(sim, n_slots - 1));
         payout = prize_pool / (1.0 + n_alive_final);
         survive_count++;
+        sum_n_alive_when_survived[ci] += n_alive_final;
+        sum_payout_when_survived[ci] += payout;
+        death_rounds_out(ci, sim) = 0;  // survived all
       } else {
-        // Died at slot best_depth (0-indexed)
-        double n_alive_after = n_field_alive(sim, best_depth);
-        double p_nobody = std::exp(-n_alive_after);
-        // Number of field entries dying at this slot
-        double n_alive_before;
-        if (best_depth == 0) {
-          // Should not happen (we already handled slot 0 above)
-          n_alive_before = n_field_alive(sim, 0);  // approximate
+        // Died at slot best_depth
+        // If anyone survives past us, we get $0
+        // If nobody survives past us, split with others dying at same slot
+        int n_alive_after = (int)std::round(n_field_alive(sim, best_depth));
+        if (n_alive_after > 0) {
+          // Field entries outlast us — $0
+          payout = 0.0;
         } else {
-          n_alive_before = n_field_alive(sim, best_depth - 1);
+          // Nobody outlasts us — split with field entries dying at this slot
+          int n_alive_before;
+          if (best_depth == 0) {
+            n_alive_before = (int)std::round(n_field_alive(sim, 0));
+          } else {
+            n_alive_before = (int)std::round(n_field_alive(sim, best_depth - 1));
+          }
+          int n_dying = std::max(n_alive_before - n_alive_after, 0);
+          payout = prize_pool / (1.0 + n_dying);
+          die_with_zero_alive[ci]++;
         }
-        double n_dying = std::max(n_alive_before - n_alive_after, 0.0);
-        payout = p_nobody * prize_pool / (1.0 + n_dying);
-        death_sum += (best_depth + 1.0);  // 1-indexed slot
+        death_sum += (best_depth + 1.0);
+        death_rounds_out(ci, sim) = s_round_nums[best_depth];
       }
 
+      if (payout > max_payout_out[ci]) max_payout_out[ci] = payout;
       ev_sum += payout;
     }
 
@@ -827,8 +834,13 @@ List solve_optimal_paths_cpp(
   }
 
   return List::create(
-    Named("ev")         = ev_out,
-    Named("p_survive")  = p_survive_out,
-    Named("mean_death") = mean_death_out
+    Named("ev")           = ev_out,
+    Named("p_survive")    = p_survive_out,
+    Named("mean_death")   = mean_death_out,
+    Named("death_rounds") = death_rounds_out,
+    Named("mean_n_alive_when_survived") = sum_n_alive_when_survived / Rcpp::pmax(p_survive_out * n_sims, 1.0),
+    Named("mean_payout_when_survived")  = sum_payout_when_survived / Rcpp::pmax(p_survive_out * n_sims, 1.0),
+    Named("max_payout")   = max_payout_out,
+    Named("die_with_zero_alive") = die_with_zero_alive
   );
 }
