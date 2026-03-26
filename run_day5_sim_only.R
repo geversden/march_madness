@@ -132,8 +132,12 @@ cat(sprintf("Calibrated %d team ratings to closing lines\n",
 # Manual rating overrides (positive = bump up, negative = bump down)
 # Use to correct for market signals not captured in closing lines
 rating_overrides <- c(
-  "Arizona" = 2.0,
-  "Michigan" = 1.5
+  "Arizona" = 2.25,
+  "Michigan" = 1.25,
+  "Purdue" = 2.25,
+  "Houston" = 1.25,
+  "Illinois" = 1,
+  "UConn" = 0.5
 )
 for (tm in names(rating_overrides)) {
   idx <- which(sim$teams$name == tm)
