@@ -37,6 +37,7 @@ source(file.path(script_dir, "scrape_splash_contests.R"))
 source(file.path(script_dir, "calibrate_win_prob.R"))
 source(file.path(script_dir, "entry_ownership_model.R"))
 source(file.path(script_dir, "entry_field_sim.R"))
+source(file.path(script_dir, "contest_mc_sim.R"))
 sourceCpp(file.path(script_dir, "..", "simulate_tourney.cpp"))
 
 # ==============================================================================
@@ -189,7 +190,7 @@ r2_d2_winners <- c(
   # ---- FILL IN SUNDAY R32 WINNERS ----
   "St. John's",     # Game 34
   "UConn",          # Game 36
-  "Florida",        # Game 37
+  "Iowa",           # Game 37
   "Arizona",        # Game 41
   "Purdue",         # Game 44
   "Alabama",        # Game 46
@@ -204,11 +205,10 @@ r2_d2_winners <- c(
 # Game 53: R32 winners from games 41, 42 (West region top half)
 # Game 54: R32 winners from games 43, 44 (West region bottom half)
 s16_d1_winners <- c(
-  # ---- FILL IN THURSDAY S16 WINNERS HERE ----
-  "PLACEHOLDER1",   # Game 51
-  "PLACEHOLDER2",   # Game 52
-  "PLACEHOLDER3",   # Game 53
-  "PLACEHOLDER4"    # Game 54
+  "Iowa",           # Game 51: Iowa vs Nebraska
+  "Illinois",       # Game 52: Illinois vs Houston
+  "Arizona",        # Game 53: Arizona vs Arkansas
+  "Purdue"          # Game 54: Texas vs Purdue
 )
 
 completed_slots <- list(
@@ -250,7 +250,7 @@ cat(sprintf("\nCalibrated %d team ratings to R32+S16 closing lines\n",
 # 4. SCRAPE OPPONENT DATA
 # ==============================================================================
 
-bearer_token <- "PASTE_FRESH_BEARER_TOKEN_HERE"
+bearer_token <- "eyJraWQiOiJENHJOR1pwNStnTzAxS21aVkg5YlZDZUd2bGNGYUNJSm1qVm5VOE4waUl3PSIsImFsZyI6IlJTMjU2In0.eyJmcmF1ZEZsYWciOiJ2ZXJpZmllZC1hY2NvdW50Iiwic3ViIjoiMTQ0OGE0MTgtOTBhMS03MDlhLTBmMTAtZDc0Y2MxOTUzMGMwIiwicm9sZSI6ImNvbW1pc3Npb25lciIsImVtYWlsX3ZlcmlmaWVkIjoidHJ1ZSIsInJvbGVzIjoiW1wiY29tbWlzc2lvbmVyXCJdIiwiaXNzIjoiaHR0cHM6XC9cL2NvZ25pdG8taWRwLnVzLWVhc3QtMS5hbWF6b25hd3MuY29tXC91cy1lYXN0LTFfNjRCOUJuQzVnIiwicmVzdHJpY3Rpb25zIjoiW10iLCJjb2duaXRvOnVzZXJuYW1lIjoiMTIyNGZjOTgtMDViNy00ZWQ3LTg5NmItZDhiMTZjMTk1ZTEyIiwib2ZwX3VzZXJfaWQiOiI0MzY4MzA2IiwicnlwX3VzZXJfaWQiOiIxNTMyNDA0Iiwib3JpZ2luX2p0aSI6ImI5MWI0YmJjLWU0ZDEtNDY1Yy1hNjk1LWU4OGVhZTg1NDhhZSIsImF1ZCI6IjU5aGJoYmpoa2FmOTg0bWVtb2M5ZmdhMTNxIiwiZXZlbnRfaWQiOiIyYWU4ZDE1ZS00NGFmLTQ4ZWUtOTI5NC1jYjQwYzAyZWU1ZTciLCJzcGxhc2hfdXNlcl9pZCI6IjEyMjRmYzk4LTA1YjctNGVkNy04OTZiLWQ4YjE2YzE5NWUxMiIsInRva2VuX3VzZSI6ImlkIiwiYXV0aF90aW1lIjoxNzczMjkzNTIzLCJuYW1lIjoiMTIyNGZjOTgtMDViNy00ZWQ3LTg5NmItZDhiMTZjMTk1ZTEyIiwiaWQiOiIxMjI0ZmM5OC0wNWI3LTRlZDctODk2Yi1kOGIxNmMxOTVlMTIiLCJleHAiOjE3NzQ2MjU3NDIsImlhdCI6MTc3NDYyMjE0MiwiYWdlIjoiMzciLCJqdGkiOiJkNjllYmU3Zi1mZjZmLTQzZTctOTI4MC04MDc0YjA5NWRjNzEiLCJ1c2VybmFtZSI6IlRpbmt5VHlsZXIifQ.BB2Z8_rPQdVDSwjb_n76zrwW5C8X21b3ID1J5Rvp7avXe4mcp42QjRjGfWGsPA6p2uiOxynMVNdSUiIxxi4Up6D9SSCPcDQtSR2Rpxvn-z1ISfh0PqttQtIBtu5rfwEerASVkw4gethXySZ16Qffef48mAkXsurqm8x6mqwvKEJnlW4CCWy4JrSkcsPuzBlGPPJedzn_82qYJtd7_QFQ4ssxeqdMEFzkvmlJ_wS94RBSZthA6vNIgolpBzvf64D_bTrnEnm_pXUeahZOzQm_jjyT5XzLQzfipSUcPsIaW6VZd9_szLShAnRh8J5WixazqbAgdcwG6cho9LkW9Us89A"
 scrape <- scrape_all_splash(bearer_token)
 # saveRDS(scrape, file.path(script_dir, "..", "scrape_day6.rds"))
 
@@ -268,7 +268,7 @@ inputs <- prepare_optimizer_inputs(
   completed_slots  = completed_slots,
   our_username     = "TinkyTyler",
   team_names_csv   = file.path(script_dir, "..", "team_names.csv"),
-  n_sims           = 2000000L,
+  n_sims           = 5000000L,
   seed             = 42
 )
 
@@ -336,14 +336,15 @@ ownership_override <- NULL
 locked_teams <- NULL
 
 # options(splash.verbose = TRUE)
-options(splash.optionality_weight = 0.20)
 result <- run_optimizer(
   scrape_inputs      = inputs,
   current_slot_id    = "S16_d2",
   ownership_override = ownership_override,
   locked_teams       = locked_teams,
-  sim_sample_size    = 50000,
-  entry_field_data   = entry_field_results
+  sim_sample_size    = 250000,
+  entry_field_data   = entry_field_results,
+  method             = "mc",
+  diversity_exp      = 0.1
 )
 
 # ==============================================================================

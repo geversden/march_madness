@@ -1912,7 +1912,14 @@ optimize_today <- function(state, candidates, current_slot_id, sim, tw,
       } else {
         best_k <- which.max(mc_result$ev)
         r <- mc_result[best_k]
-        used_names <- teams_dt$name[g$used_teams[[1]]]
+        used_ids <- g$used_teams[[1]]
+        used_names <- teams_dt$name[used_ids]
+        # DEBUG: also print entry_ids and raw team_ids for first contest's groups
+        if (gi <= nrow(groups) && gi == 1) {
+          cat(sprintf("  [DEBUG] teams_dt rows=%d, team_id range=%d-%d, name[1]=%s, name[64]=%s\n",
+                      nrow(teams_dt), min(teams_dt$team_id), max(teams_dt$team_id),
+                      teams_dt$name[1], teams_dt$name[nrow(teams_dt)]))
+        }
         # Compact diagnostics: EV, p_surv, conditional n_alive, conditional payout, max payout, die_zero count
         surv_info <- ""
         if ("mean_n_alive_surv" %in% names(mc_result) && !is.na(r$mean_n_alive_surv)) {
@@ -1920,10 +1927,11 @@ optimize_today <- function(state, candidates, current_slot_id, sim, tw,
                                r$mean_n_alive_surv, r$mean_payout_surv,
                                r$max_payout, r$die_zero_alive)
         }
-        cat(sprintf("  Group %d/%d: %d cands in %.1fs (top: %s=$%.2f  p_surv=%.4f%s) | used: %s\n",
+        cat(sprintf("  Group %d/%d: %d cands in %.1fs (top: %s=$%.2f  p_surv=%.4f%s) | used_ids=[%s] used: %s\n",
                     gi, nrow(groups), nrow(mc_result), mc_elapsed,
                     r$team_name, top_ev, r$p_survive_all,
                     surv_info,
+                    paste(used_ids, collapse = ","),
                     paste(used_names, collapse = ", ")))
       }
 

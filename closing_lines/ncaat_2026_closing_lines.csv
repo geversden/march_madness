@@ -1,20 +1,10 @@
 "home_team","away_team","date","home_spread","home_win_prob"
-"Arizona Wildcats","Arkansas Razorbacks",2026-03-26,-8,0.759
-"Houston Cougars","Illinois Fighting Illini",2026-03-26,-2.5,0.5931
-"Nebraska Cornhuskers","Iowa Hawkeyes",2026-03-26,-2,0.5487
-"Purdue Boilermakers","Texas Longhorns",2026-03-26,-7.5,0.7547
 "Duke Blue Devils","St. John's Red Storm",2026-03-27,-6.5,0.7051
 "Iowa State Cyclones","Tennessee Volunteers",2026-03-27,-3.5,0.6229
 "Michigan Wolverines","Alabama Crimson Tide",2026-03-27,-9,0.7941
 "UConn Huskies","Michigan St Spartans",2026-03-27,-2,0.5427
-"Arizona Wildcats","Purdue Boilermakers",2026-03-28,-4.5,0.6247
-"Arizona Wildcats","Texas Longhorns",2026-03-28,-10.5,0.7874
-"Arkansas Razorbacks","Texas Longhorns",2026-03-28,-2.5,0.5685
-"Houston Cougars","Iowa Hawkeyes",2026-03-28,-7.5,0.7229
-"Houston Cougars","Nebraska Cornhuskers",2026-03-28,-7.5,0.7095
-"Illinois Fighting Illini","Nebraska Cornhuskers",2026-03-28,-4.5,0.6318
-"Illinois Fighting Illini","Iowa Hawkeyes",2026-03-28,-5.5,0.6482
-"Purdue Boilermakers","Arkansas Razorbacks",2026-03-28,-3.5,0.5945
+"Arizona Wildcats","Purdue Boilermakers",2026-03-28,-5.5,0.6908
+"Illinois Fighting Illini","Iowa Hawkeyes",2026-03-28,-6.5,0.7086
 "Alabama Crimson Tide","Tennessee Volunteers",2026-03-29,1.5,0.4902
 "Duke Blue Devils","UConn Huskies",2026-03-29,-4.5,0.6344
 "Duke Blue Devils","Michigan St Spartans",2026-03-29,-6.5,0.6704
@@ -23,9 +13,9 @@
 "Michigan Wolverines","Iowa State Cyclones",2026-03-29,-4.5,0.6247
 "Michigan Wolverines","Tennessee Volunteers",2026-03-29,-8.5,0.7376
 "UConn Huskies","St. John's Red Storm",2026-03-29,-1.5,0.5217
-"Colorado Buffaloes","Oklahoma Sooners",2026-04-01,6.5,0.3151
+"Colorado Buffaloes","Oklahoma Sooners",2026-04-01,6.5,0.3095
 "Minnesota Golden Gophers","Baylor Bears",2026-04-01,3.5,0.4035
-"Auburn Tigers","Illinois St Redbirds",2026-04-02,-7,NA
-"Creighton Bluejays","Rutgers Scarlet Knights",2026-04-02,-3,0.5965
-"New Mexico Lobos","Tulsa Golden Hurricane",2026-04-02,-4.5,0.6062
-"West Virginia Mountaineers","Stanford Cardinal",2026-04-02,1,0.4951
+"Auburn Tigers","Illinois St Redbirds",2026-04-02,-7,0.7043
+"Creighton Bluejays","Rutgers Scarlet Knights",2026-04-02,-4,0.6113
+"New Mexico Lobos","Tulsa Golden Hurricane",2026-04-02,-4.5,0.604
+"West Virginia Mountaineers","Stanford Cardinal",2026-04-02,1.5,0.4853

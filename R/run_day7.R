@@ -1,20 +1,20 @@
 #!/usr/bin/env Rscript
 # ==============================================================================
-# run_day5.R — Day 5 (S16_d1) optimizer pipeline
+# run_day7.R — Day 7 (E8) optimizer pipeline
 #
-# Orchestrates: scrape → lock R64+R32 results → re-simulate → entry-level
-# field sim → optimize → export CSVs
+# Orchestrates: scrape → lock R64+R32+S16 results → re-simulate →
+# entry-level field sim → optimize → export CSVs
 #
-# Key improvements over Day 3/4:
-#   - Entry-level field simulation: uses calibrated entry ownership model to
-#     predict each opponent's S16+ picks based on their pick history
-#   - Per-sim exact opponent survival counts: instead of averaged field survival
-#     rates, computes exact number of surviving opponents in each simulation
-#   - More accurate EV calculation from these per-sim counts
+# Key differences from Day 6:
+#   - 6 completed slots locked (R1_d1, R1_d2, R2_d1, R2_d2, S16_d1, S16_d2)
+#   - current_slot_id = "E8"
+#   - 56 locked games (48 R64+R32 + 8 S16)
+#   - E8 is a combined slot: pick 2 teams from 4 E8 games (days 7+8)
+#   - After today, only FF+CHAMP remain
+#   - Calibration includes R32 + S16 + E8 dates
 #
 # Usage:
-#   source("R/run_day5.R")
-#   # OR interactively: run sections below
+#   source("R/run_day7.R")
 # ==============================================================================
 
 library(data.table)
@@ -48,7 +48,6 @@ sourceCpp(file.path(script_dir, "..", "simulate_tourney.cpp"))
 YEAR <- 2026L
 UPDATE_FACTOR <- 0.5
 
-# Load bracket
 bracket_file <- file.path(script_dir, "..", "brackets", sprintf("bracket_%d.csv", YEAR))
 bracket <- read.csv(bracket_file, stringsAsFactors = FALSE)
 stopifnot(nrow(bracket) == 64)
@@ -61,7 +60,6 @@ teams <- data.frame(
   stringsAsFactors = FALSE
 )
 
-# Load KenPom ratings
 kenpom_file <- file.path(script_dir, "..", "kenpom_data", sprintf("kenpom_%d.csv", YEAR))
 if (!file.exists(kenpom_file)) {
   dated <- sort(Sys.glob(file.path(script_dir, "..", "kenpom_data",
@@ -80,7 +78,6 @@ kp$NetRtg <- as.numeric(kp$NetRtg)
 kp <- kp[!is.na(kp$NetRtg), ]
 kp_lookup <- setNames(kp$NetRtg, kp$Team)
 
-# Name aliases
 team_dict_file <- file.path(script_dir, "..", "team_names.csv")
 team_dict <- read.csv(team_dict_file, stringsAsFactors = FALSE)
 kp_alias <- setNames(team_dict$kenpom_name, team_dict$bracket_name)
@@ -102,7 +99,6 @@ get_rating <- function(name) {
 
 teams$rating <- sapply(teams$name, get_rating)
 
-# Build round_info
 region_names <- unique(teams$region)
 round_info <- data.frame(
   round_num  = c(rep(1, 32), rep(2, 16), rep(3, 8), rep(4, 4), rep(5, 2), 6),
@@ -135,10 +131,7 @@ sim <- list(
 cat(sprintf("Built bracket: %d teams, KenPom ratings loaded\n", nrow(teams)))
 
 # ==============================================================================
-# 2. COMPLETED RESULTS — R64 + R32 winners (all 48 games)
-#
-# By Day 5 (S16_d1), all R64 and R32 games are complete.
-# Fill in actual winners before running.
+# 2. COMPLETED RESULTS — R64 + R32 + S16 winners (56 games)
 # ==============================================================================
 
 cat("\n========================================\n")
@@ -146,70 +139,55 @@ cat("LOCKING COMPLETED RESULTS\n")
 cat("========================================\n")
 
 r1_d1_winners <- c(
-  # Thursday R64 winners (games 1,2,5,6,11,12,13,14,15,16,19,20,21,22,25,26)
-  "Duke",           # Game 1:  (1) Duke vs (16) Siena
-  "TCU",            # Game 2:  (8) Ohio State vs (9) TCU
-  "Louisville",     # Game 5:  (6) Louisville vs (11) South Florida
-  "Michigan State", # Game 6:  (3) Michigan State vs (14) North Dakota State
-  "Vanderbilt",     # Game 11: (5) Vanderbilt vs (12) McNeese State
-  "Nebraska",       # Game 12: (4) Nebraska vs (13) Troy
-  "VCU",            # Game 13: (6) North Carolina vs (11) VCU
-  "Illinois",       # Game 14: (3) Illinois vs (14) Penn
-  "Texas A&M",      # Game 15: (7) Saint Mary's vs (10) Texas A&M
-  "Houston",        # Game 16: (2) Houston vs (15) Idaho
-  "High Point",     # Game 19: (5) Wisconsin vs (12) High Point
-  "Arkansas",       # Game 20: (4) Arkansas vs (13) Hawaii
-  "Texas",          # Game 21: (6) BYU vs (11) Texas
-  "Gonzaga",        # Game 22: (3) Gonzaga vs (14) Kennesaw State
-  "Michigan",       # Game 25: (1) Michigan vs (16) Howard
-  "Saint Louis"     # Game 26: (8) Georgia vs (9) Saint Louis
+  "Duke",           # Game 1
+  "TCU",            # Game 2
+  "Louisville",     # Game 5
+  "Michigan State", # Game 6
+  "Vanderbilt",     # Game 11
+  "Nebraska",       # Game 12
+  "VCU",            # Game 13
+  "Illinois",       # Game 14
+  "Texas A&M",      # Game 15
+  "Houston",        # Game 16
+  "High Point",     # Game 19
+  "Arkansas",       # Game 20
+  "Texas",          # Game 21
+  "Gonzaga",        # Game 22
+  "Michigan",       # Game 25
+  "Saint Louis"     # Game 26
 )
 
 r1_d2_winners <- c(
-  # Friday R64 winners (games 3,4,7,8,9,10,17,18,23,24,27,28,29,30,31,32)
-  "St. John's",     # Game 3:  (5) St. John's vs (12) Northern Iowa
-  "Kansas",         # Game 4:  (4) Kansas vs (13) Cal Baptist
-  "UCLA",           # Game 7:  (7) UCLA vs (10) UCF
-  "UConn",          # Game 8:  (2) UConn vs (15) Furman
-  "Florida",        # Game 9:  (1) Florida vs (16) Prairie View A&M
-  "Iowa",           # Game 10: (8) Clemson vs (9) Iowa
-  "Arizona",        # Game 17: (1) Arizona vs (16) LIU
-  "Utah State",     # Game 18: (8) Villanova vs (9) Utah State
-  "Miami",          # Game 23: (7) Miami vs (10) Missouri
-  "Purdue",         # Game 24: (2) Purdue vs (15) Queens
-  "Texas Tech",     # Game 27: (5) Texas Tech vs (12) Akron
-  "Alabama",        # Game 28: (4) Alabama vs (13) Hofstra
-  "Tennessee",      # Game 29: (6) Tennessee vs (11) Miami OH
-  "Virginia",       # Game 30: (3) Virginia vs (14) Wright State
-  "Kentucky",       # Game 31: (7) Kentucky vs (10) Santa Clara
-  "Iowa State"      # Game 32: (2) Iowa State vs (15) Tennessee State
+  "St. John's",     # Game 3
+  "Kansas",         # Game 4
+  "UCLA",           # Game 7
+  "UConn",          # Game 8
+  "Florida",        # Game 9
+  "Iowa",           # Game 10
+  "Arizona",        # Game 17
+  "Utah State",     # Game 18
+  "Miami",          # Game 23
+  "Purdue",         # Game 24
+  "Texas Tech",     # Game 27
+  "Alabama",        # Game 28
+  "Tennessee",      # Game 29
+  "Virginia",       # Game 30
+  "Kentucky",       # Game 31
+  "Iowa State"      # Game 32
 )
 
-# ---- R32 Day 1 (Saturday) results ----
-# R32_SAT_GAMES: 33, 35, 38, 39, 40, 42, 43, 45
 r2_d1_winners <- c(
-  "Duke",           # Game 33: Duke vs TCU
-  "Michigan State", # Game 35: Louisville vs Michigan State
-  "Nebraska",       # Game 38: Vanderbilt vs Nebraska
-  "Illinois",       # Game 39: VCU vs Illinois
-  "Houston",        # Game 40: Texas A&M vs Houston
-  "Arkansas",       # Game 42: High Point vs Arkansas
-  "Texas",          # Game 43: Texas vs Gonzaga
-  "Michigan"        # Game 45: Michigan vs Saint Louis
+  "Duke",           # Game 33
+  "Michigan State", # Game 35
+  "Nebraska",       # Game 38
+  "Illinois",       # Game 39
+  "Houston",        # Game 40
+  "Arkansas",       # Game 42
+  "Texas",          # Game 43
+  "Michigan"        # Game 45
 )
 
-# ---- R32 Day 2 (Sunday) results ----
-# R32_SUN_GAMES: 34, 36, 37, 41, 44, 46, 47, 48
-# Game 34: St. John's vs Kansas
-# Game 36: UCLA vs UConn
-# Game 37: Florida vs Iowa
-# Game 41: Arizona vs Utah State
-# Game 44: Miami vs Purdue
-# Game 46: Texas Tech vs Alabama
-# Game 47: Tennessee vs Virginia
-# Game 48: Kentucky vs Iowa State
 r2_d2_winners <- c(
-  # ---- FILL IN SUNDAY R32 WINNERS HERE ----
   "St. John's",     # Game 34
   "UConn",          # Game 36
   "Iowa",           # Game 37
@@ -220,45 +198,52 @@ r2_d2_winners <- c(
   "Iowa State"      # Game 48
 )
 
-completed_slots <- list(
-  R1_d1 = r1_d1_winners,
-  R1_d2 = r1_d2_winners,
-  R2_d1 = r2_d1_winners,
-  R2_d2 = r2_d2_winners
+# ---- S16 Day 1 (Thursday) results ----
+s16_d1_winners <- c(
+  "Iowa",           # Game 51: Iowa vs Nebraska
+  "Illinois",       # Game 52: Illinois vs Houston
+  "Arizona",        # Game 53: Arizona vs Arkansas
+  "Purdue"          # Game 54: Texas vs Purdue
 )
 
-cat(sprintf("\nLocked: %d R64 + %d R32 = %d total games\n",
+# ---- S16 Day 2 (Friday) results ----
+# S16_FRI_GAMES: 49, 50, 55, 56
+# Game 49: Duke vs St. John's (East top half)
+# Game 50: Michigan State vs UConn (East bottom half)
+# Game 55: Michigan vs Alabama (Midwest top half)
+# Game 56: Tennessee vs Iowa State (Midwest bottom half)
+s16_d2_winners <- c(
+  # ---- FILL IN FRIDAY S16 WINNERS HERE ----
+  "PLACEHOLDER1",   # Game 49: Duke vs St. John's
+  "PLACEHOLDER2",   # Game 50: Michigan State vs UConn
+  "PLACEHOLDER3",   # Game 55: Michigan vs Alabama
+  "PLACEHOLDER4"    # Game 56: Tennessee vs Iowa State
+)
+
+completed_slots <- list(
+  R1_d1  = r1_d1_winners,
+  R1_d2  = r1_d2_winners,
+  R2_d1  = r2_d1_winners,
+  R2_d2  = r2_d2_winners,
+  S16_d1 = s16_d1_winners,
+  S16_d2 = s16_d2_winners
+)
+
+cat(sprintf("\nLocked: %d R64 + %d R32 + %d S16 = %d total games\n",
             length(r1_d1_winners) + length(r1_d2_winners),
             length(r2_d1_winners) + length(r2_d2_winners),
+            length(s16_d1_winners) + length(s16_d2_winners),
             length(unlist(completed_slots))))
-
-# Print S16 matchups
-cat("\n========================================\n")
-cat("SWEET 16 MATCHUPS\n")
-cat("========================================\n")
-
-cat("\nThursday S16 (Day 5) games:\n")
-for (g in S16_THU_GAMES) {
-  feeders <- c(2L * (g - 49L) + 33L, 2L * (g - 49L) + 34L)
-  # The winners of those R32 games play each other
-  cat(sprintf("  Game %d: R32 game %d winner vs R32 game %d winner\n", g, feeders[1], feeders[2]))
-}
-
-cat("\nFriday S16 (Day 6) games:\n")
-for (g in S16_FRI_GAMES) {
-  feeders <- c(2L * (g - 49L) + 33L, 2L * (g - 49L) + 34L)
-  cat(sprintf("  Game %d: R32 game %d winner vs R32 game %d winner\n", g, feeders[1], feeders[2]))
-}
 
 # ==============================================================================
 # 3. CALIBRATE RATINGS TO CLOSING LINES
 #
-# By Day 5, we have closing lines for R32 and S16 Day 1.
-# Calibrate ratings to all available market data.
+# Include R32 + S16 + E8 dates.
 # ==============================================================================
 
-# Include R32 + S16 Day 1 closing lines
-calibration_dates <- c("2026-03-21", "2026-03-22", "2026-03-26")
+calibration_dates <- c("2026-03-21", "2026-03-22",
+                       "2026-03-26", "2026-03-27",
+                       "2026-03-28", "2026-03-29")
 cl_file <- file.path(script_dir, "..", "closing_lines", "ncaat_2026_closing_lines.csv")
 
 sim$teams <- calibrate_ratings_to_lines(
@@ -270,31 +255,28 @@ sim$teams <- calibrate_ratings_to_lines(
   round_dates      = calibration_dates
 )
 
-cat(sprintf("\nCalibrated %d team ratings to R32+S16 closing lines\n",
+cat(sprintf("\nCalibrated %d team ratings to R32+S16+E8 closing lines\n",
             sum(sim$teams$rating_delta != 0)))
 
 # ==============================================================================
 # 4. SCRAPE OPPONENT DATA
 # ==============================================================================
 
-# Option A: Live scrape (requires fresh bearer token from Splash)
-bearer_token <- "eyJraWQiOiJENHJOR1pwNStnTzAxS21aVkg5YlZDZUd2bGNGYUNJSm1qVm5VOE4waUl3PSIsImFsZyI6IlJTMjU2In0.eyJmcmF1ZEZsYWciOiJ2ZXJpZmllZC1hY2NvdW50Iiwic3ViIjoiMTQ0OGE0MTgtOTBhMS03MDlhLTBmMTAtZDc0Y2MxOTUzMGMwIiwicm9sZSI6ImNvbW1pc3Npb25lciIsImVtYWlsX3ZlcmlmaWVkIjoidHJ1ZSIsInJvbGVzIjoiW1wiY29tbWlzc2lvbmVyXCJdIiwiaXNzIjoiaHR0cHM6XC9cL2NvZ25pdG8taWRwLnVzLWVhc3QtMS5hbWF6b25hd3MuY29tXC91cy1lYXN0LTFfNjRCOUJuQzVnIiwicmVzdHJpY3Rpb25zIjoiW10iLCJjb2duaXRvOnVzZXJuYW1lIjoiMTIyNGZjOTgtMDViNy00ZWQ3LTg5NmItZDhiMTZjMTk1ZTEyIiwib2ZwX3VzZXJfaWQiOiI0MzY4MzA2IiwicnlwX3VzZXJfaWQiOiIxNTMyNDA0Iiwib3JpZ2luX2p0aSI6ImI5MWI0YmJjLWU0ZDEtNDY1Yy1hNjk1LWU4OGVhZTg1NDhhZSIsImF1ZCI6IjU5aGJoYmpoa2FmOTg0bWVtb2M5ZmdhMTNxIiwiZXZlbnRfaWQiOiIyYWU4ZDE1ZS00NGFmLTQ4ZWUtOTI5NC1jYjQwYzAyZWU1ZTciLCJzcGxhc2hfdXNlcl9pZCI6IjEyMjRmYzk4LTA1YjctNGVkNy04OTZiLWQ4YjE2YzE5NWUxMiIsInRva2VuX3VzZSI6ImlkIiwiYXV0aF90aW1lIjoxNzczMjkzNTIzLCJuYW1lIjoiMTIyNGZjOTgtMDViNy00ZWQ3LTg5NmItZDhiMTZjMTk1ZTEyIiwiaWQiOiIxMjI0ZmM5OC0wNWI3LTRlZDctODk2Yi1kOGIxNmMxOTVlMTIiLCJleHAiOjE3NzQ0OTMyMTAsImlhdCI6MTc3NDQ4OTYxMCwiYWdlIjoiMzciLCJqdGkiOiIzZWE1MDBhNy1mNDZlLTRkYWMtODBjZi04ZmIzZGI4YWI2OWQiLCJ1c2VybmFtZSI6IlRpbmt5VHlsZXIifQ.JEf7LW8Im4LcOMl7AMhHb1-itPvvXDVZsUsPCHtNXWyAN9oNn9SUqX-oiu6rM4V8XMdqlqVNfq93-gf8_ThvITeIOJbsL61QcEnwM1Lnj0YEL0ndPg-4TZuMwOf0EwZ1N0HoAZF6GRGxjpbhIp7_eRaquDwbPcSbfZp1EqniDKsqQZ88UN1k-EVnpVCX0ceveo-A_nnKMN4bVxrCxEw9MJWpy-rSM5LRwgt1mJQuFxfBb_qrKcp-3sOUm4kjh35Lo2oho3a1WYa3tCPaAARKeKnmlysCxgjLqXkWxRuGT26ddxs7xuFGy9RQTTaQn1ZNUOdlCkWniHhh0-2qtm-ISw"
+bearer_token <- "PASTE_FRESH_BEARER_TOKEN_HERE"
 scrape <- scrape_all_splash(bearer_token)
-# saveRDS(scrape, file.path(script_dir, "..", "scrape_day5.rds"))
+# saveRDS(scrape, file.path(script_dir, "..", "scrape_day7.rds"))
 
 # Option B: Load cached scrape
-# scrape <- readRDS(file.path(script_dir, "..", "scrape_day5.rds"))
+# scrape <- readRDS(file.path(script_dir, "..", "scrape_day7.rds"))
 
 # ==============================================================================
 # 5. PREPARE OPTIMIZER INPUTS
-#    (re-simulates with locked R64+R32 results using calibrated ratings,
-#     builds portfolio, infers alive status)
 # ==============================================================================
 
 inputs <- prepare_optimizer_inputs(
   scrape_results   = scrape,
   sim              = sim,
-  current_slot_id  = "S16_d1",
+  current_slot_id  = "E8",
   completed_slots  = completed_slots,
   our_username     = "TinkyTyler",
   team_names_csv   = file.path(script_dir, "..", "team_names.csv"),
@@ -311,16 +293,11 @@ cat(sprintf("Portfolio: %d entries (%d alive)\n",
 # ==============================================================================
 # 5b. ENTRY-LEVEL FIELD SIMULATION
 #
-# By S16, we have 4 rounds of pick history for every field entry.
-# Use the calibrated entry ownership model to predict each entry's S16+ picks
-# and compute per-sim exact opponent survival counts.
-#
-# This replaces the generic ownership-based field model with precise,
-# entry-level predictions. The model accounts for:
-#   - Each entry's specific used_teams (hard constraint: can't reuse)
-#   - Path viability (boost for teams whose opponent is already used)
-#   - Future value saving (reduce pick prob for high championship equity teams)
-#   - Calibrated on 2024+2025 historical Splash data
+# By E8, the field is very constrained:
+#   - 6 rounds of pick history per entry
+#   - Very few entries alive
+#   - Only 2-3 remaining slots (E8, FF, CHAMP)
+#   - E8 is a 2-pick slot — much more constrained combinatorics
 # ==============================================================================
 
 cat("\n========================================\n")
@@ -340,16 +317,16 @@ for (cid in names(inputs$field_avail)) {
   entry_field_results[[cid]] <- simulate_entry_level_field(
     field_avail        = fa,
     sim                = inputs$sim,
-    current_slot_id    = "S16_d1",
+    current_slot_id    = "E8",
     entry_model_params = entry_model_params,
     teams_dt           = inputs$sim$teams
   )
 
   # Print implied ownership diagnostic
   efd <- entry_field_results[[cid]]
-  if ("S16_d1" %in% names(efd$implied_ownership)) {
-    cat("\n  Entry-model implied S16_d1 ownership:\n")
-    own <- efd$implied_ownership[["S16_d1"]]
+  if ("E8" %in% names(efd$implied_ownership)) {
+    cat("\n  Entry-model implied E8 ownership:\n")
+    own <- efd$implied_ownership[["E8"]]
     ord <- order(own, decreasing = TRUE)
     for (j in ord) {
       if (own[j] >= 0.005) {
@@ -361,25 +338,12 @@ for (cid in names(inputs$field_avail)) {
 
 # ==============================================================================
 # 6. OWNERSHIP OVERRIDE (optional)
-#
-# The entry-level field sim provides ownership estimates from the model.
-# You can still override if you have a strong read from manual analysis.
-# Set to NULL to rely entirely on the entry-level field sim for EV.
 # ==============================================================================
 
 ownership_override <- NULL
-# ownership_override <- list(
-#   S16_d1 = c(
-#     # ---- FILL IN IF OVERRIDING ----
-#   )
-# )
 
 # ==============================================================================
 # 7. RUN OPTIMIZER
-#
-# Uses entry-level field data for per-sim exact opponent survival counts.
-# The optimizer's precompute_group_context() will use n_field_alive_matrix
-# instead of the averaged field survival curves.
 # ==============================================================================
 
 locked_teams <- NULL
@@ -387,10 +351,10 @@ locked_teams <- NULL
 # options(splash.verbose = TRUE)
 result <- run_optimizer(
   scrape_inputs      = inputs,
-  current_slot_id    = "S16_d1",
+  current_slot_id    = "E8",
   ownership_override = ownership_override,
   locked_teams       = locked_teams,
-  sim_sample_size    = 50000,
+  sim_sample_size    = 250000,
   entry_field_data   = entry_field_results,
   method             = "mc",
   diversity_exp      = 0.25
@@ -404,5 +368,5 @@ csv_dir <- file.path(script_dir, "..", "splash_entry_csvs")
 export_picks(result, csv_dir = csv_dir, locked_teams = locked_teams)
 
 cat("\n========================================\n")
-cat("Day 5 (S16_d1) optimization complete!\n")
+cat("Day 7 (E8) optimization complete!\n")
 cat("========================================\n")

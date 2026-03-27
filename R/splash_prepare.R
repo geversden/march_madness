@@ -479,6 +479,22 @@ init_portfolio_from_scrape <- function(scrape_results, teams_dt,
     entry_fee <- meta$fee[1]
     prize_pool <- if ("prize_pool" %in% names(meta)) meta$prize_pool[1] else entry_fee * contest_size * 0.85
 
+    # DEBUG: Print day_map and raw scrape data for our entries
+    cat(sprintf("\n  [DEBUG %s] day_map: %s\n", contest_name,
+                paste(sprintf("%s->%s", names(day_map), day_map), collapse=", ")))
+    day_cols_in_data <- grep("^day\\d+$", names(our_paths), value = TRUE)
+    cat(sprintf("  [DEBUG] Day columns in scrape: %s\n", paste(day_cols_in_data, collapse=", ")))
+
+    for (i in seq_len(min(nrow(our_paths), 3))) {
+      row <- our_paths[i, ]
+      cat(sprintf("  [DEBUG] Entry %s raw scrape: ", row$entryId))
+      for (dc in sort(day_cols_in_data)) {
+        val <- if (dc %in% names(row)) as.character(row[[dc]]) else "NA"
+        cat(sprintf("%s=%s  ", dc, val))
+      }
+      cat("\n")
+    }
+
     # Build entry rows
     for (i in seq_len(nrow(our_paths))) {
       row <- our_paths[i, ]
@@ -505,6 +521,17 @@ init_portfolio_from_scrape <- function(scrape_results, teams_dt,
           team_names <- strsplit(team_str, "\\+")[[1]]
           team_ids <- map_team_names(trimws(team_names), name_map)
 
+          # DEBUG: Print name->id mapping for first few entries
+          if (i <= 3) {
+            resolved_names <- sapply(team_ids, function(tid) {
+              if (is.na(tid)) "???" else teams_dt$name[tid]
+            })
+            cat(sprintf("    [DEBUG] %s -> %s: '%s' -> ids=%s -> names=%s\n",
+                        day_col, slot_id, team_str,
+                        paste(team_ids, collapse=","),
+                        paste(resolved_names, collapse=",")))
+          }
+
           if (length(team_ids) == 1 && !is.na(team_ids[1])) {
             entry[, (col) := team_ids[1]]
           } else if (length(team_ids) > 1) {
@@ -529,7 +556,24 @@ init_portfolio_from_scrape <- function(scrape_results, teams_dt,
   }
 
   entries_dt <- rbindlist(all_entries, fill = TRUE)
-  init_portfolio_from_entries(entries_dt)
+  portfolio <- init_portfolio_from_entries(entries_dt)
+
+  # Diagnostic: print used teams per entry for verification against website
+  cat("\n  Portfolio verification (compare against website):\n")
+  pick_cols <- intersect(all_slot_cols(), names(portfolio))
+  for (i in seq_len(nrow(portfolio))) {
+    row <- portfolio[i]
+    vals <- unlist(row[, ..pick_cols])
+    used_ids <- vals[!is.na(vals)]
+    used_names <- teams_dt$name[used_ids]
+    cat(sprintf("    %s [%s] %s: %s\n",
+                row$entry_id, row$contest_name,
+                if (row$alive) "ALIVE" else "DEAD",
+                paste(used_names, collapse = ", ")))
+  }
+  cat("\n")
+
+  portfolio
 }
 
 # ==============================================================================
@@ -621,15 +665,17 @@ infer_alive_status <- function(scrape_results, completed_slots, name_map) {
       sum(alive_test)
     }
 
-    # Try all permutations of day->slot assignment
-    # For 3 completed slots, that's 6 permutations. For 2, it's 2. Cheap.
+    # Determine the correct day->slot assignment
+    # With the scrape now sorting slates by team pool size, day columns should
+    # already be in approximately correct round order. We only need to resolve
+    # within-round d1/d2 ambiguity (at most 2! per round pair).
     relevant_slots <- slot_ids[slot_ids %in% default_day_map[day_keys]]
 
     if (length(day_keys) <= 1) {
       # Only 1 day column — no permutation needed
       best_map <- setNames(as.list(relevant_slots), day_keys)
-    } else {
-      # Generate all permutations of slot assignments to day columns
+    } else if (length(day_keys) <= 4) {
+      # For 4 or fewer slots (<=24 permutations), brute-force is fine
       perms <- combinat_perms(length(day_keys))
       best_alive <- -1
       best_map <- setNames(as.list(relevant_slots), day_keys)  # default
@@ -637,6 +683,81 @@ infer_alive_status <- function(scrape_results, completed_slots, name_map) {
       for (perm in perms) {
         candidate_slots <- relevant_slots[perm]
         candidate_map <- setNames(as.list(candidate_slots), day_keys)
+        n_alive <- count_alive(candidate_map)
+        if (n_alive > best_alive) {
+          best_alive <- n_alive
+          best_map <- candidate_map
+        }
+      }
+    } else {
+      # For 5+ slots, use round-aware approach to avoid combinatorial explosion.
+      # Group day columns by round (using team pool size), then permute within
+      # round groups only. This reduces 5!=120 to at most 2!*2!*1!=4 permutations.
+
+      # Count unique teams per day column to determine round
+      day_team_counts <- sapply(day_keys, function(dc) {
+        teams <- unique(trimws(unlist(strsplit(as.character(paths[[dc]]), "\\+"))))
+        length(teams[!is.na(teams) & nzchar(teams)])
+      })
+
+      # Determine round for each slot
+      slot_round_num <- function(sid) {
+        if (grepl("^R1", sid)) return(1L)
+        if (grepl("^R2", sid)) return(2L)
+        if (grepl("^S16", sid)) return(3L)
+        if (grepl("^E8", sid)) return(4L)
+        if (grepl("^FF", sid)) return(5L)
+        return(6L)
+      }
+      slot_rounds <- sapply(relevant_slots, slot_round_num)
+
+      # Assign round to each day column by matching team counts to rounds
+      # Sort day columns by team count descending (more teams = earlier round)
+      day_order <- order(day_team_counts, decreasing = TRUE)
+      sorted_days <- day_keys[day_order]
+
+      # Sort slots by round
+      slot_order <- order(slot_rounds)
+      sorted_slots <- relevant_slots[slot_order]
+
+      # Group slots by round
+      sorted_slot_rounds <- slot_rounds[slot_order]
+      round_groups <- split(seq_along(sorted_slots), sorted_slot_rounds)
+
+      # Build candidate mappings by permuting within round groups only
+      # Start with default: assign sorted_days to sorted_slots in order
+      base_map <- setNames(as.list(sorted_slots), sorted_days)
+
+      # Generate all within-round permutations
+      all_maps <- list(base_map)
+      for (rg in round_groups) {
+        if (length(rg) <= 1) next
+        # Permute the day columns in this round group
+        sub_perms <- combinat_perms(length(rg))
+        new_maps <- list()
+        for (existing_map in all_maps) {
+          for (sp in sub_perms) {
+            new_map <- existing_map
+            rg_days <- sorted_days[rg]
+            rg_slots <- sorted_slots[rg]
+            permuted_slots <- rg_slots[sp]
+            for (k in seq_along(rg)) {
+              new_map[[rg_days[k]]] <- permuted_slots[k]
+            }
+            new_maps[[length(new_maps) + 1]] <- new_map
+          }
+        }
+        all_maps <- new_maps
+      }
+
+      cat(sprintf("  [%s] Round-aware detection: %d candidates (from %d day cols)\n",
+                  cn, length(all_maps), length(day_keys)))
+      cat(sprintf("    Day team counts: %s\n",
+                  paste(sprintf("%s=%d", day_keys, day_team_counts), collapse=", ")))
+
+      best_alive <- -1
+      best_map <- base_map
+      for (candidate_map in all_maps) {
         n_alive <- count_alive(candidate_map)
         if (n_alive > best_alive) {
           best_alive <- n_alive

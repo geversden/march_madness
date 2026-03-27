@@ -33,8 +33,7 @@ splash_contests <- data.frame(
     "Kurt Benkert's $100K Survivor Madness",
     "Spooky Express $30K Guaranteed Survivor Madness",
     "SGPN $25K Survivor Madness",
-    "MARCH MADNESS SURVIVOR",
-    "FOR THE FANS - SURVIVOR MADNESS"
+    "DeBrie’s Bracket Bloodbath -- 2026 March Madness Survivor"
   ),
   contest_id = c(
     "9eba15b3-e62d-42f0-b399-5957cd33d62c",
@@ -46,15 +45,14 @@ splash_contests <- data.frame(
     "b3f535dc-b014-4cd6-93a1-546f800caf1a",
     "6cc0a29e-86bb-4a1a-8251-2b581ad80320",
     "919e7294-fd5d-4ae0-9b87-e8969d657282",
-    "3950c489-4150-4a19-bf01-0056a46d81c1",
-    "cf3889a3-84a2-4165-990b-891f67e26f9b"
+    "39489e9f-24d4-4540-9d87-1dafa237da36"
   ),
-  fee = c(25, 25, 15, 100, 50, 30, 5, 75, 25, 10, 40),
-  prize_pool = c(250020, 100012.50, 100008, 50040, 35010, 30024, 100003.50, 30037.50, 25020, 8750, 25305),
+  fee = c(25, 25, 15, 100, 50, 30, 5, 75, 25, 20),
+  prize_pool = c(250020, 100012.50, 100008, 50040, 35010, 30024, 100003.50, 30037.50, 25020, 9852.50),
   format = c(
     "2-2-2-2-1-1", "2-2-2-2-1-1", "2-2-2-2-1-1", "2-2-2-2-1-1",
     "2-2-2-2-1-1", "2-2-2-2-1-1", "4-4-2-2-1-1", "2-2-2-2-1-1",
-    "2-2-2-2-1-1", "2-2-2-2-1-1", "4-4-2-2-1-1"
+    "2-2-2-2-1-1", "2-2-2-2-1-1"
   ),
   stringsAsFactors = FALSE
 )
@@ -328,6 +326,9 @@ scrape_splash_contest <- function(contest_id, headers, our_username = "TinkyTyle
         by = "entryId"
       ) |>
       mutate(alive = is.na(eliminatedSlateId))
+  } else {
+    # No elimination data available — assume all alive (infer_alive_status will refine)
+    entry_paths$alive <- TRUE
   }
 
   cat(sprintf("    Done: %d entries, %d alive, %d days\n",
