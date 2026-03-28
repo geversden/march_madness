@@ -172,49 +172,147 @@ mc_score_candidates <- function(group, current_slot_id, sim, teams_dt,
     game_col_for_team(tid, slot_round_nums[1])
   }, integer(1))
 
+  # For multi-pick current slot (E8 combined), generate all valid PAIRS.
+  # Teams in the same game play each other and can't both be picked.
+  first_n_picks <- slot_n_picks[1]
+  comp_cands <- integer(0)
+  comp_gcols <- integer(0)
+
+  if (first_n_picks == 2) {
+    # Group candidates by game column — teams in same game can't pair
+    cand_games <- data.table(
+      tid  = first_cands,
+      gcol = first_gcols
+    )
+
+    # Generate all valid pairs: one from each of two different games
+    unique_games <- unique(cand_games$gcol)
+    if (length(unique_games) >= 2) {
+      game_combos <- combn(unique_games, 2, simplify = FALSE)
+      pair_primary <- integer(0)
+      pair_primary_gcol <- integer(0)
+      pair_comp <- integer(0)
+      pair_comp_gcol <- integer(0)
+
+      for (gc in game_combos) {
+        teams_a <- cand_games[gcol == gc[1]]
+        teams_b <- cand_games[gcol == gc[2]]
+        for (ia in seq_len(nrow(teams_a))) {
+          for (ib in seq_len(nrow(teams_b))) {
+            # Only generate each pair once (sorted by team_id to deduplicate)
+            ta <- teams_a$tid[ia]
+            tb <- teams_b$tid[ib]
+            if (ta < tb) {
+              pair_primary <- c(pair_primary, ta)
+              pair_primary_gcol <- c(pair_primary_gcol, teams_a$gcol[ia])
+              pair_comp <- c(pair_comp, tb)
+              pair_comp_gcol <- c(pair_comp_gcol, teams_b$gcol[ib])
+            } else {
+              pair_primary <- c(pair_primary, tb)
+              pair_primary_gcol <- c(pair_primary_gcol, teams_b$gcol[ib])
+              pair_comp <- c(pair_comp, ta)
+              pair_comp_gcol <- c(pair_comp_gcol, teams_a$gcol[ia])
+            }
+          }
+        }
+      }
+
+      # Replace first_cands/gcols with pair primaries
+      first_cands <- pair_primary
+      first_gcols <- pair_primary_gcol
+      comp_cands <- pair_comp
+      comp_gcols <- pair_comp_gcol
+
+      cat(sprintf("    E8 pair scoring: %d valid pairs from %d teams across %d games\n",
+                  length(first_cands), nrow(cand_games), length(unique_games)))
+    }
+  }
+
   # Subsample all_results to sample_idx
   ar_sub <- sim$all_results[sample_idx, , drop = FALSE]
 
   # Call C++
   cpp_result <- solve_optimal_paths_cpp(
-    all_results       = ar_sub,
-    n_field_alive     = n_field_alive_matrix,
+    all_results        = ar_sub,
+    n_field_alive      = n_field_alive_matrix,
     slot_team_ids_list = slot_team_ids_list,
     slot_game_cols_list = slot_game_cols_list,
-    slot_n_picks      = as.integer(slot_n_picks),
-    slot_round_nums   = as.integer(slot_round_nums),
-    used_teams_vec    = as.integer(used_teams),
-    first_slot_cands  = as.integer(first_cands),
-    first_slot_gcols  = as.integer(first_gcols),
-    prize_pool        = as.double(prize_pool),
-    n_slots           = as.integer(n_remaining)
+    slot_n_picks       = as.integer(slot_n_picks),
+    slot_round_nums    = as.integer(slot_round_nums),
+    used_teams_vec     = as.integer(used_teams),
+    first_slot_cands   = as.integer(first_cands),
+    first_slot_gcols   = as.integer(first_gcols),
+    prize_pool         = as.double(prize_pool),
+    n_slots            = as.integer(n_remaining),
+    first_slot_comp_cands = as.integer(comp_cands),
+    first_slot_comp_gcols = as.integer(comp_gcols)
   )
 
   # Build result data.table
-  # Compute p_survive_today from sims (fraction where candidate won slot 0)
-  p_today <- vapply(seq_along(first_cands), function(i) {
-    tid <- first_cands[i]
-    gcol <- first_gcols[i] + 1L  # 1-indexed for R
-    mean(ar_sub[, gcol] == tid)
-  }, numeric(1))
+  is_pair_mode <- length(comp_cands) > 0
 
-  result_dt <- data.table(
-    team_id         = first_cands,
-    team_name       = teams_dt$name[first_cands],
-    ev              = cpp_result$ev,
-    p_survive_today = p_today,
-    p_win_contest   = cpp_result$p_survive,
-    mean_death_rd   = cpp_result$mean_death,
-    p_survive_all   = cpp_result$p_survive,
-    mean_n_alive_surv = if (!is.null(cpp_result$mean_n_alive_when_survived))
-                          cpp_result$mean_n_alive_when_survived else NA_real_,
-    mean_payout_surv  = if (!is.null(cpp_result$mean_payout_when_survived))
-                          cpp_result$mean_payout_when_survived else NA_real_,
-    max_payout        = if (!is.null(cpp_result$max_payout))
-                          cpp_result$max_payout else NA_real_,
-    die_zero_alive    = if (!is.null(cpp_result$die_with_zero_alive))
-                          cpp_result$die_with_zero_alive else NA_integer_
-  )
+  if (is_pair_mode) {
+    # Compute p_survive_today = P(BOTH teams in pair won their games)
+    p_today <- vapply(seq_along(first_cands), function(i) {
+      tid1 <- first_cands[i]
+      gcol1 <- first_gcols[i] + 1L
+      tid2 <- comp_cands[i]
+      gcol2 <- comp_gcols[i] + 1L
+      mean(ar_sub[, gcol1] == tid1 & ar_sub[, gcol2] == tid2)
+    }, numeric(1))
+
+    # Build pair name (alphabetically sorted)
+    pair_names <- vapply(seq_along(first_cands), function(i) {
+      paste(sort(c(teams_dt$name[first_cands[i]],
+                    teams_dt$name[comp_cands[i]])), collapse = " + ")
+    }, character(1))
+
+    result_dt <- data.table(
+      team_id         = first_cands,
+      comp_id         = comp_cands,
+      team_name       = pair_names,
+      ev              = cpp_result$ev,
+      p_survive_today = p_today,
+      p_win_contest   = cpp_result$p_survive,
+      mean_death_rd   = cpp_result$mean_death,
+      p_survive_all   = cpp_result$p_survive,
+      mean_n_alive_surv = if (!is.null(cpp_result$mean_n_alive_when_survived))
+                            cpp_result$mean_n_alive_when_survived else NA_real_,
+      mean_payout_surv  = if (!is.null(cpp_result$mean_payout_when_survived))
+                            cpp_result$mean_payout_when_survived else NA_real_,
+      max_payout        = if (!is.null(cpp_result$max_payout))
+                            cpp_result$max_payout else NA_real_,
+      die_zero_alive    = if (!is.null(cpp_result$die_with_zero_alive))
+                            cpp_result$die_with_zero_alive else NA_integer_,
+      slot1_extra_name  = teams_dt$name[comp_cands]
+    )
+  } else {
+    # Single-pick mode (original behavior)
+    p_today <- vapply(seq_along(first_cands), function(i) {
+      tid <- first_cands[i]
+      gcol <- first_gcols[i] + 1L
+      mean(ar_sub[, gcol] == tid)
+    }, numeric(1))
+
+    result_dt <- data.table(
+      team_id         = first_cands,
+      team_name       = teams_dt$name[first_cands],
+      ev              = cpp_result$ev,
+      p_survive_today = p_today,
+      p_win_contest   = cpp_result$p_survive,
+      mean_death_rd   = cpp_result$mean_death,
+      p_survive_all   = cpp_result$p_survive,
+      mean_n_alive_surv = if (!is.null(cpp_result$mean_n_alive_when_survived))
+                            cpp_result$mean_n_alive_when_survived else NA_real_,
+      mean_payout_surv  = if (!is.null(cpp_result$mean_payout_when_survived))
+                            cpp_result$mean_payout_when_survived else NA_real_,
+      max_payout        = if (!is.null(cpp_result$max_payout))
+                            cpp_result$max_payout else NA_real_,
+      die_zero_alive    = if (!is.null(cpp_result$die_with_zero_alive))
+                            cpp_result$die_with_zero_alive else NA_integer_
+    )
+  }
+
   # Attach per-candidate x per-sim death rounds matrix for portfolio EV
   # Rows = candidates (same order as first_cands), Cols = sims
   attr(result_dt, "death_rounds") <- cpp_result$death_rounds

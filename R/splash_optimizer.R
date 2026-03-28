@@ -1935,9 +1935,36 @@ optimize_today <- function(state, candidates, current_slot_id, sim, tw,
                     paste(used_names, collapse = ", ")))
       }
 
+      # For multi-pick slots: if mc_result already has pair names (from pair-based
+      # scoring in contest_mc_sim.R), use them directly. Otherwise, fall back to
+      # post-hoc companion assignment.
+      has_pair_names <- "slot1_extra_name" %in% names(mc_result) &&
+        any(!is.na(mc_result$slot1_extra_name))
+
+      if (!has_pair_names) {
+        slot1_n_picks_mc <- get_n_picks(current_slot_id, group_format)
+        companion_names <- rep(NA_character_, nrow(mc_result))
+        if (slot1_n_picks_mc > 1 && nrow(mc_result) > 1) {
+          used_set <- g$used_teams[[1]]
+          for (k in seq_len(nrow(mc_result))) {
+            primary_id <- mc_result$team_id[k]
+            avail_comp <- mc_result[team_id != primary_id & !team_id %in% used_set]
+            if (nrow(avail_comp) > 0) {
+              best_comp <- avail_comp[which.max(ev)]
+              companion_names[k] <- best_comp$team_name
+            }
+          }
+        }
+      }
+
       # Convert to all_scores format
       for (k in seq_len(nrow(mc_result))) {
         r <- mc_result[k]
+        extra_name <- if (has_pair_names) {
+          r$slot1_extra_name
+        } else {
+          companion_names[k]
+        }
         score_row <- data.table(
           group_id        = g$group_id,
           contest_id      = g$contest_id,
@@ -1950,7 +1977,7 @@ optimize_today <- function(state, candidates, current_slot_id, sim, tw,
           p_survive_today = r$p_survive_today,
           p_win_contest   = r$p_win_contest,
           mean_death_rd   = r$mean_death_rd,
-          slot1_extra_name = NA_character_,
+          slot1_extra_name = extra_name,
           group_id_orig   = g$group_id
         )
         all_scores[[length(all_scores) + 1]] <- score_row
@@ -2301,12 +2328,26 @@ optimize_today <- function(state, candidates, current_slot_id, sim, tw,
     c_best <- c_scores[, .SD[which.max(ev)], by = team_name]
     setorder(c_best, -ev)
     n_groups <- uniqueN(c_scores$group_id)
+
+    # For multi-pick slots, deduplicate symmetric pairs (A+B == B+A)
+    has_extras <- "slot1_extra_name" %in% names(c_best) &&
+      any(!is.na(c_best$slot1_extra_name))
+    if (has_extras) {
+      c_best[, pair_key := ifelse(is.na(slot1_extra_name), team_name,
+        paste(sort(c(team_name, slot1_extra_name)), collapse = " + ")),
+        by = seq_len(nrow(c_best))]
+      c_best <- c_best[, .SD[which.max(ev)], by = pair_key]
+      setorder(c_best, -ev)
+    }
+
     cat(sprintf("\n  Contest %s (%d groups) — Top 5:\n", substr(cid, 1, 12), n_groups))
     top_n <- min(5, nrow(c_best))
     for (k in 1:top_n) {
       r <- c_best[k]
-      name_str <- r$team_name
-      if (!is.na(r$slot1_extra_name)) name_str <- paste0(name_str, " + ", r$slot1_extra_name)
+      name_str <- if (has_extras && !is.na(r$pair_key)) r$pair_key else r$team_name
+      if (!has_extras && !is.na(r$slot1_extra_name)) {
+        name_str <- paste0(name_str, " + ", r$slot1_extra_name)
+      }
       opt_str <- if ("optionality" %in% names(r) && !is.na(r$optionality)) {
         sprintf("  Opt=%.1f", r$optionality)
       } else ""
@@ -2586,30 +2627,50 @@ print_allocation <- function(allocation, teams_dt, scores = NULL, groups = NULL,
   total_fees <- sum(by_team$total_fees)
 
   # Compute opponent ownership and availability from entry field data
+  # For pair-based scoring, look up each team in the pair individually
+  # and average their ownership / multiply their availability
   opp_own <- setNames(rep(NA_real_, nrow(by_team)), by_team$team_name)
   opp_avail <- setNames(rep(NA_real_, nrow(by_team)), by_team$team_name)
   if (!is.null(entry_field_data) && !is.null(current_slot_id)) {
-    # Average implied ownership across all contests (weighted by alive count)
     total_alive <- sum(sapply(entry_field_data, function(efd) efd$alive_count))
     for (i in seq_len(nrow(by_team))) {
       tn <- by_team$team_name[i]
       tid <- by_team$team_id[i]
+
+      # For pairs (team_name contains "+"), look up both team names
+      is_pair <- grepl("\\+", tn)
+      if (is_pair) {
+        pair_names <- trimws(strsplit(tn, "\\+")[[1]])
+        pair_tids <- match(pair_names, teams_dt$name)
+        pair_tids <- pair_tids[!is.na(pair_tids)]
+      } else {
+        pair_names <- tn
+        pair_tids <- tid
+      }
+
       weighted_own <- 0
       weighted_avail <- 0
       for (cid in names(entry_field_data)) {
         efd <- entry_field_data[[cid]]
         w <- efd$alive_count / total_alive
-        # Ownership from implied_ownership
         own_vec <- efd$implied_ownership[[current_slot_id]]
-        if (!is.null(own_vec) && tn %in% names(own_vec)) {
-          weighted_own <- weighted_own + w * own_vec[tn]
+
+        # Ownership: average across teams in pair
+        if (!is.null(own_vec)) {
+          pair_own <- sapply(pair_names, function(pn) {
+            if (pn %in% names(own_vec)) own_vec[pn] else 0
+          })
+          weighted_own <- weighted_own + w * mean(pair_own)
         }
-        # Availability: % of field entries that haven't used this team
+
+        # Availability: for pairs, use minimum availability (both must be available)
         if (!is.null(field_avail) && cid %in% names(field_avail)) {
           fa <- field_avail[[cid]]
-          n_used <- sum(sapply(fa$used_teams_by_entry, function(ut) tid %in% ut))
-          avail_frac <- 1 - n_used / max(fa$alive_count, 1)
-          weighted_avail <- weighted_avail + w * avail_frac
+          pair_avail <- sapply(pair_tids, function(ptid) {
+            n_used <- sum(sapply(fa$used_teams_by_entry, function(ut) ptid %in% ut))
+            1 - n_used / max(fa$alive_count, 1)
+          })
+          weighted_avail <- weighted_avail + w * min(pair_avail)
         }
       }
       opp_own[tn] <- weighted_own
@@ -2632,7 +2693,9 @@ print_allocation <- function(allocation, teams_dt, scores = NULL, groups = NULL,
   for (i in seq_len(nrow(by_team))) {
     r <- by_team[i]
     name_str <- r$team_name
-    if (has_extras && !is.na(r$slot1_extra_name)) {
+    # Only append companion if team_name doesn't already contain "+"
+    # (pair-based scoring already includes both names)
+    if (has_extras && !is.na(r$slot1_extra_name) && !grepl("\\+", name_str)) {
       name_str <- paste0(name_str, " + ", r$slot1_extra_name)
     }
     pct <- 100 * r$total_fees / total_fees

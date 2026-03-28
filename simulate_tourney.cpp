@@ -705,11 +705,14 @@ List solve_optimal_paths_cpp(
     IntegerVector first_slot_cands,
     IntegerVector first_slot_gcols,
     double prize_pool,
-    int n_slots) {
+    int n_slots,
+    IntegerVector first_slot_comp_cands = IntegerVector(0),
+    IntegerVector first_slot_comp_gcols = IntegerVector(0)) {
 
   int n_sims = all_results.nrow();
   int n_first = first_slot_cands.size();
   int first_round = slot_round_nums[0];
+  bool has_fixed_companions = (first_slot_comp_cands.size() == n_first);
 
   // Pre-extract slot data (slots 1..n_slots-1 are future slots)
   std::vector<IntegerVector> s_team_ids(n_slots);
@@ -775,7 +778,7 @@ List solve_optimal_paths_cpp(
         continue;
       }
 
-      // Candidate won slot 0 — DFS for best path from slot 1 onward
+      // Candidate won slot 0
       std::vector<int> cur_used = base_used;
       cur_used.push_back(cand_tid);
 
@@ -784,11 +787,87 @@ List solve_optimal_paths_cpp(
       std::vector<int> cur_bracket_rds = base_bracket_rounds;
       cur_bracket_rds.push_back(first_round);
 
-      int best_depth = dfs_best_path(
-        1, n_slots, sim, all_results,
-        s_team_ids, s_game_cols, s_n_picks, s_round_nums,
-        cur_used, cur_bracket, cur_bracket_rds
-      );
+      int best_depth;
+
+      if (has_fixed_companions) {
+        // PAIR MODE: companion is pre-determined (e.g., E8 pair scoring).
+        // Check that companion also won its game in this sim.
+        int comp_tid = first_slot_comp_cands[ci];
+        int comp_gcol = first_slot_comp_gcols[ci];
+
+        if (all_results(sim, comp_gcol) != comp_tid) {
+          // Companion lost — pair dies at slot 0
+          death_sum += 1.0;
+          death_rounds_out(ci, sim) = s_round_nums[0];
+          continue;
+        }
+
+        // Both primary and companion won — add companion and DFS
+        cur_used.push_back(comp_tid);
+        cur_bracket.push_back(comp_tid);
+        cur_bracket_rds.push_back(first_round);
+
+        best_depth = dfs_best_path(
+          1, n_slots, sim, all_results,
+          s_team_ids, s_game_cols, s_n_picks, s_round_nums,
+          cur_used, cur_bracket, cur_bracket_rds
+        );
+
+        cur_used.pop_back();
+        cur_bracket.pop_back();
+        cur_bracket_rds.pop_back();
+      } else if (s_n_picks[0] <= 1) {
+        // Single-pick slot: DFS from slot 1
+        best_depth = dfs_best_path(
+          1, n_slots, sim, all_results,
+          s_team_ids, s_game_cols, s_n_picks, s_round_nums,
+          cur_used, cur_bracket, cur_bracket_rds
+        );
+      } else {
+        // Multi-pick first slot WITHOUT fixed companions (legacy fallback).
+        // Try each companion dynamically and take best.
+        best_depth = 0;
+        int n_cand0 = s_team_ids[0].size();
+
+        for (int ci2 = 0; ci2 < n_cand0; ci2++) {
+          int comp_tid = s_team_ids[0][ci2];
+          if (comp_tid == cand_tid) continue;
+
+          bool already_used = false;
+          for (size_t u = 0; u < cur_used.size(); u++) {
+            if (cur_used[u] == comp_tid) { already_used = true; break; }
+          }
+          if (already_used) continue;
+
+          int comp_gcol = s_game_cols[0][ci2];
+          if (all_results(sim, comp_gcol) != comp_tid) continue;
+
+          cur_used.push_back(comp_tid);
+          cur_bracket.push_back(comp_tid);
+          cur_bracket_rds.push_back(first_round);
+
+          int depth = dfs_best_path(
+            1, n_slots, sim, all_results,
+            s_team_ids, s_game_cols, s_n_picks, s_round_nums,
+            cur_used, cur_bracket, cur_bracket_rds
+          );
+          if (depth > best_depth) best_depth = depth;
+
+          cur_used.pop_back();
+          cur_bracket.pop_back();
+          cur_bracket_rds.pop_back();
+        }
+
+        if (best_depth == 0) {
+          death_sum += 1.0;
+          death_rounds_out(ci, sim) = s_round_nums[0];
+          cur_used.pop_back();
+          cur_bracket.pop_back();
+          cur_bracket_rds.pop_back();
+          ev_sum += 0.0;
+          continue;
+        }
+      }
 
       // Compute payout: integer field alive counts, simple split
       double payout;

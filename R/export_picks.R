@@ -210,7 +210,16 @@ export_picks <- function(result, csv_dir = "splash_entry_csvs", locked_teams = N
         }
       }
 
-      new_uuid1 <- resolve_uuid(assign$team, uuid_lookup)
+      # For pair-based scoring, team_name is "TeamA + TeamB" — split into two picks
+      team1_name <- assign$team
+      team2_name <- assign$extra
+      if (grepl(" \\+ ", team1_name)) {
+        pair_parts <- trimws(strsplit(team1_name, " \\+ ")[[1]])
+        team1_name <- pair_parts[1]
+        team2_name <- pair_parts[2]
+      }
+
+      new_uuid1 <- resolve_uuid(team1_name, uuid_lookup)
 
       if (is_format_c) {
         existing_pick2 <- if (pick2_col <= length(fields)) fields[pick2_col] else ""
@@ -221,7 +230,7 @@ export_picks <- function(result, csv_dir = "splash_entry_csvs", locked_teams = N
             pick2_locked <- TRUE
           }
         }
-        new_uuid2 <- if (!is.null(assign$extra)) resolve_uuid(assign$extra, uuid_lookup) else NA
+        new_uuid2 <- if (!is.null(team2_name)) resolve_uuid(team2_name, uuid_lookup) else NA
         if (pick1_locked && pick2_locked) next
         else if (pick1_locked) {
           if (!is.na(new_uuid1)) fields[pick2_col] <- new_uuid1
